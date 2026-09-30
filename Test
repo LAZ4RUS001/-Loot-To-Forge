@@ -57,6 +57,7 @@ local function SafeFireProximityPrompt(pp)
 end
 
 -- Global Farm State
+local isMobileDevice = UserInputService.TouchEnabled and not (UserInputService.KeyboardEnabled and UserInputService.MouseEnabled)
 local State = {
     AutoTrain = false,
     AutoRebirth = false,
@@ -74,7 +75,12 @@ local State = {
     AutoClaimIndex = false,
     AntiAFK = true,
     Language = "TH",
+    WindowScale = isMobileDevice and 0.85 or 1.0,
+    WindowWidth = isMobileDevice and 480 or 560,
+    WindowHeight = isMobileDevice and 340 or 420,
 }
+
+local RequestAutoSave
 
 -- ========================================================================
 -- SILENT BULLETPROOF ANTI-AFK ENGINE (No Kick, No Rejoin, No UI Toggle)
@@ -143,7 +149,7 @@ end)
 task.spawn(function()
     while true do
         task.wait(90)
-        if State.AntiAFK ~= false then
+        if State and State.AntiAFK ~= false then
             DisableCoreIdledConnections()
             PulseAntiAfkInput()
         end
@@ -473,9 +479,9 @@ _G.SpinachFluentLib = Fluent
 
 local isMobile = UserInputService.TouchEnabled and not (UserInputService.KeyboardEnabled and UserInputService.MouseEnabled)
 local vp = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize) or Vector2.new(800, 600)
-local winWidth = isMobile and math.clamp(math.floor(vp.X * 0.90), 320, 520) or 580
-local winHeight = isMobile and math.clamp(math.floor(vp.Y * 0.85), 260, 380) or 460
-local tabWidth = isMobile and 120 or 150
+local winWidth = State.WindowWidth or (isMobile and math.clamp(math.floor(vp.X * 0.90), 320, 500) or 560)
+local winHeight = State.WindowHeight or (isMobile and math.clamp(math.floor(vp.Y * 0.85), 260, 360) or 420)
+local tabWidth = isMobile and 120 or 145
 
 local Window = Fluent:CreateWindow({
     Title = "[Enhance] +1 Loot To Forge",
@@ -488,6 +494,107 @@ local Window = Fluent:CreateWindow({
 })
 _G.StreetHubFluentWindow = Window
 _G.SpinachFluentWindow = Window
+
+-- Setup Window UIScale controller
+local WindowUIScale = Window.Root:FindFirstChild("StreetHubUIScale")
+if not WindowUIScale then
+    WindowUIScale = Instance.new("UIScale")
+    WindowUIScale.Name = "StreetHubUIScale"
+    WindowUIScale.Scale = State.WindowScale or (isMobile and 0.85 or 1.0)
+    WindowUIScale.Parent = Window.Root
+else
+    WindowUIScale.Scale = State.WindowScale or (isMobile and 0.85 or 1.0)
+end
+
+-- ========================================================================
+-- INTERACTIVE CORNER RESIZE HANDLE (Drag freely on Mobile & PC)
+-- ========================================================================
+local function SetupWindowResizeHandle()
+    local root = Window.Root
+    if not root then return end
+
+    local prev = root:FindFirstChild("StreetHubResizeGrip")
+    if prev then pcall(function() prev:Destroy() end) end
+
+    local grip = Instance.new("TextButton")
+    grip.Name = "StreetHubResizeGrip"
+    grip.Size = UDim2.fromOffset(26, 26)
+    grip.Position = UDim2.new(1, -26, 1, -26)
+    grip.BackgroundColor3 = Color3.fromRGB(24, 26, 32)
+    grip.BackgroundTransparency = 0.3
+    grip.BorderSizePixel = 0
+    grip.Text = "⤡"
+    grip.TextColor3 = Color3.fromRGB(0, 215, 125)
+    grip.TextSize = 16
+    grip.Font = Enum.Font.GothamBold
+    grip.AutoButtonColor = false
+    grip.ZIndex = 9999
+    grip.Parent = root
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = grip
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(0, 215, 125)
+    stroke.Transparency = 0.5
+    stroke.Thickness = 1
+    stroke.Parent = grip
+
+    local resizing = false
+    local dragStart = Vector2.new()
+    local startSize = Vector2.new()
+
+    grip.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            resizing = true
+            dragStart = Vector2.new(input.Position.X, input.Position.Y)
+            startSize = Vector2.new(root.AbsoluteSize.X, root.AbsoluteSize.Y)
+
+            local conn
+            conn = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    resizing = false
+                    if conn then conn:Disconnect() end
+                    State.WindowWidth = root.AbsoluteSize.X
+                    State.WindowHeight = root.AbsoluteSize.Y
+                    if RequestAutoSave then
+                        RequestAutoSave()
+                    end
+                end
+            end)
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if resizing and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStart
+            local cam = workspace.CurrentCamera
+            local vpSize = cam and cam.ViewportSize or Vector2.new(1200, 800)
+            local currentScale = (WindowUIScale and WindowUIScale.Scale) or 1.0
+
+            local adjustedDeltaX = delta.X / currentScale
+            local adjustedDeltaY = delta.Y / currentScale
+
+            local minW, minH = 360, 240
+            local maxW, maxH = math.floor((vpSize.X * 0.98) / currentScale), math.floor((vpSize.Y * 0.95) / currentScale)
+
+            local newW = math.clamp(math.floor(startSize.X + adjustedDeltaX), minW, maxW)
+            local newH = math.clamp(math.floor(startSize.Y + adjustedDeltaY), minH, maxH)
+            root.Size = UDim2.fromOffset(newW, newH)
+        end
+    end)
+
+    grip.MouseEnter:Connect(function()
+        grip.BackgroundColor3 = Color3.fromRGB(36, 40, 50)
+        grip.BackgroundTransparency = 0.1
+    end)
+    grip.MouseLeave:Connect(function()
+        grip.BackgroundColor3 = Color3.fromRGB(24, 26, 32)
+        grip.BackgroundTransparency = 0.3
+    end)
+end
+SetupWindowResizeHandle()
 
 -- ========================================================================
 -- FLOATING DRAGGABLE UI TOGGLE BUTTON (Open / Close)
@@ -616,7 +723,7 @@ end
 CreateFloatingToggleButton()
 
 local Tabs = {
-    Farm = Window:AddTab({ Title = "Farm", Icon = "zap" }),
+    Farm = Window:AddTab({ Title = "Farm", Icon = "sprout" }),
     Forge = Window:AddTab({ Title = "Forge", Icon = "hammer" }),
     Combat = Window:AddTab({ Title = "Combat", Icon = "swords" }),
     Rewards = Window:AddTab({ Title = "Claim", Icon = "gift" }),
@@ -704,6 +811,13 @@ local I18N = {
         AntiAFKDesc = "Disables Roblox 20-minute idle kicks and pulses anti-afk input",
         BtnForceSaveTitle = "💾 Force Save All Settings Now",
         BtnForceSaveDesc = "Immediately writes current setup to disk",
+
+        WindowScaleTitle = "🔍 Window UI Scale (Zoom)",
+        WindowScaleDesc = "Adjust overall UI scale percentage (60% - 125%)",
+        WindowPresetTitle = "📐 Window Size Preset",
+        BtnResetWindowSizeTitle = "🔄 Reset Window Size & Scale",
+        BtnResetWindowSizeDesc = "Restore window dimensions and zoom back to default",
+        NotifyWindowReset = "Window size & scale restored to default!",
 
         NotifyLoaded = "Config loaded for %s! Tap STREET HUB or press Right-Control to toggle.",
         NotifyLangChanged = "Language switched to English!",
@@ -795,6 +909,13 @@ local I18N = {
         BtnForceSaveTitle = "💾 บันทึกการตั้งค่าลงดิสก์ทันที",
         BtnForceSaveDesc = "เขียนข้อมูลการตั้งค่าปัจจุบันลงไฟล์ดิสก์ทันที",
 
+        WindowScaleTitle = "🔍 สเกลขนาดหน้าต่าง (Zoom UI)",
+        WindowScaleDesc = "ปรับย่อ-ขยายขนาดหน้าต่างและเมนูทั้งหมด (60% - 125%)",
+        WindowPresetTitle = "📐 ขนาดหน้าต่างสำเร็จรูป",
+        BtnResetWindowSizeTitle = "🔄 รีเซ็ตขนาดหน้าต่างและสเกล",
+        BtnResetWindowSizeDesc = "คืนค่าขนาดหน้าต่างและระยะซูมกลับเป็นค่าเริ่มต้น",
+        NotifyWindowReset = "รีเซ็ตขนาดหน้าต่างและสเกลเป็นค่าเริ่มต้นเรียบร้อย!",
+
         NotifyLoaded = "โหลดการตั้งค่าของ %s สำเร็จ! แตะปุ่ม STREET HUB หรือกด Right-Control เพื่อเปิด/ปิด",
         NotifyLangChanged = "เปลี่ยนภาษาเป็น ภาษาไทย เรียบร้อยแล้ว!",
         NotifyWarpTrain = "วาปไปยังจุดเทรนที่ %s เรียบร้อย",
@@ -884,6 +1005,9 @@ local function UpdateLanguage(lang)
     if E.BtnForceSave then E.BtnForceSave:SetTitle(t.BtnForceSaveTitle) E.BtnForceSave:SetDesc(t.BtnForceSaveDesc) end
 
     if E.DropdownLanguage then E.DropdownLanguage:SetTitle(t.LanguageTitle) end
+    if E.SliderWindowScale then E.SliderWindowScale:SetTitle(t.WindowScaleTitle) E.SliderWindowScale:SetDesc(t.WindowScaleDesc) end
+    if E.DropdownWindowPreset then E.DropdownWindowPreset:SetTitle(t.WindowPresetTitle) end
+    if E.BtnResetWindowSize then E.BtnResetWindowSize:SetTitle(t.BtnResetWindowSizeTitle) E.BtnResetWindowSize:SetDesc(t.BtnResetWindowSizeDesc) end
 end
 
 -- ========================================================================
@@ -940,6 +1064,9 @@ local function SaveCurrentState()
             AutoClaimIndex = State.AutoClaimIndex,
             AntiAFK = State.AntiAFK,
             Language = State.Language,
+            WindowScale = State.WindowScale,
+            WindowWidth = State.WindowWidth,
+            WindowHeight = State.WindowHeight,
         }
         writefile(CONFIG_FILE, HttpService:JSONEncode(data))
     end)
@@ -960,6 +1087,15 @@ local function LoadSavedState()
                 if data.Language then
                     State.Language = data.Language
                 end
+                if data.WindowScale then
+                    State.WindowScale = tonumber(data.WindowScale)
+                end
+                if data.WindowWidth then
+                    State.WindowWidth = tonumber(data.WindowWidth)
+                end
+                if data.WindowHeight then
+                    State.WindowHeight = tonumber(data.WindowHeight)
+                end
                 for k, v in pairs(data) do
                     if Options[k] and Options[k].SetValue then
                         Options[k]:SetValue(v)
@@ -968,12 +1104,15 @@ local function LoadSavedState()
                 if Options.LanguageSetting then
                     Options.LanguageSetting:SetValue(State.Language == "EN" and "English" or "ไทย (Thai)")
                 end
+                if Options.WindowScaleSlider and State.WindowScale then
+                    Options.WindowScaleSlider:SetValue(math.floor(State.WindowScale * 100))
+                end
             end
         end
     end)
 end
 
-local function RequestAutoSave()
+RequestAutoSave = function()
     if not autoSaveLoaded or not autoSaveEnabled then return end
     if autoSaveDebounce then return end
     autoSaveDebounce = true
@@ -1450,6 +1589,73 @@ DropdownLanguage:OnChanged(function(Value)
 end)
 UIElements.DropdownLanguage = DropdownLanguage
 
+local SliderWindowScale = Tabs.Settings:AddSlider("WindowScaleSlider", {
+    Title = "🔍 Window UI Scale (Zoom)",
+    Description = "Adjust overall UI scale percentage (60% - 125%)",
+    Default = math.floor((State.WindowScale or (isMobileDevice and 0.85 or 1.0)) * 100),
+    Min = 60,
+    Max = 125,
+    Rounding = 0,
+    Callback = function(Value)
+        local scaleVal = Value / 100
+        State.WindowScale = scaleVal
+        if WindowUIScale then
+            WindowUIScale.Scale = scaleVal
+        end
+        RequestAutoSave()
+    end
+})
+UIElements.SliderWindowScale = SliderWindowScale
+
+local DropdownWindowPreset = Tabs.Settings:AddDropdown("WindowPresetSetting", {
+    Title = "📐 Window Size Preset",
+    Values = {"กะทัดรัด (Compact: 460 x 320)", "มาตรฐาน (Standard: 540 x 380)", "ใหญ่ (Large: 620 x 440)"},
+    Multi = false,
+    Default = (State.WindowWidth and State.WindowWidth <= 480) and "กะทัดรัด (Compact: 460 x 320)" or "มาตรฐาน (Standard: 540 x 380)"
+})
+DropdownWindowPreset:OnChanged(function(Value)
+    if string.find(Value, "460") then
+        Window.Root.Size = UDim2.fromOffset(460, 320)
+    elseif string.find(Value, "540") then
+        Window.Root.Size = UDim2.fromOffset(540, 380)
+    elseif string.find(Value, "620") then
+        Window.Root.Size = UDim2.fromOffset(620, 440)
+    end
+    State.WindowWidth = Window.Root.AbsoluteSize.X
+    State.WindowHeight = Window.Root.AbsoluteSize.Y
+    RequestAutoSave()
+end)
+UIElements.DropdownWindowPreset = DropdownWindowPreset
+
+local BtnResetWindowSize = Tabs.Settings:AddButton({
+    Title = "🔄 Reset Window Size & Scale",
+    Description = "Restore window dimensions and zoom back to default",
+    Callback = function()
+        local defScale = isMobileDevice and 0.85 or 1.0
+        local defW = isMobileDevice and 480 or 560
+        local defH = isMobileDevice and 340 or 420
+        State.WindowScale = defScale
+        State.WindowWidth = defW
+        State.WindowHeight = defH
+        if WindowUIScale then
+            WindowUIScale.Scale = defScale
+        end
+        Window.Root.Size = UDim2.fromOffset(defW, defH)
+        if Options.WindowScaleSlider then
+            Options.WindowScaleSlider:SetValue(math.floor(defScale * 100))
+        end
+        RequestAutoSave()
+        local lang = State.Language or "TH"
+        local t = I18N[lang] or I18N.TH
+        Fluent:Notify({
+            Title = "STREET HUB",
+            Content = t.NotifyWindowReset,
+            Duration = 2.5
+        })
+    end
+})
+UIElements.BtnResetWindowSize = BtnResetWindowSize
+
 local ProfileParagraph = Tabs.Settings:AddParagraph({
     Title = "👤 Active Account Profile",
     Content = "Account: " .. LocalPlayer.Name .. " (" .. tostring(LocalPlayer.UserId) .. ")\n" ..
@@ -1833,6 +2039,18 @@ end)
 -- Load saved settings before starting regular flow
 LoadSavedState()
 pcall(function() SaveManager:LoadAutoloadConfig() end)
+
+-- Apply user preferred window size and scale
+if State.WindowWidth and State.WindowHeight and Window and Window.Root then
+    pcall(function()
+        Window.Root.Size = UDim2.fromOffset(State.WindowWidth, State.WindowHeight)
+    end)
+end
+if State.WindowScale and WindowUIScale then
+    pcall(function()
+        WindowUIScale.Scale = State.WindowScale
+    end)
+end
 
 -- Apply user preferred language
 UpdateLanguage(State.Language or "TH")
