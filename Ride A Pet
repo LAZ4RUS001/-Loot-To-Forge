@@ -1,0 +1,2095 @@
+-- =========================================================================
+-- [🌋] Ride A Pet - Ultimate Automation Suite (Fluent UI Edition)
+-- Precision Auto TP Egg Collector + Instant Reliable Return Home
+-- Supported: Synapse, KRNL, Script-Ware, Wave, MCP Client
+-- =========================================================================
+
+pcall(function()
+    for _, v in ipairs(workspace:GetChildren()) do
+        if v.Name == "Body" and v:IsA("BasePart") then
+            v:Destroy()
+        end
+    end
+    if _G.RideAPetGUI and typeof(_G.RideAPetGUI) == "Instance" then
+        pcall(function() _G.RideAPetGUI:Destroy() end)
+    end
+    if _G.StreetHubToggleGui and typeof(_G.StreetHubToggleGui) == "Instance" then
+        pcall(function() _G.StreetHubToggleGui:Destroy() end)
+    end
+    local core = game:GetService("CoreGui")
+    local pgui = game:GetService("Players").LocalPlayer and game:GetService("Players").LocalPlayer:FindFirstChild("PlayerGui")
+    for _, container in ipairs({core, pgui}) do
+        if container then
+            for _, sg in ipairs(container:GetChildren()) do
+                if sg:IsA("ScreenGui") and (sg.Name == "ScreenGui" or sg.Name == "StreetHubToggleGui") then
+                    for _, desc in ipairs(sg:GetDescendants()) do
+                        if desc:IsA("TextLabel") and (desc.Text == "Ride A Pet [🌋]" or desc.Text == "by Street Hub" or desc.Text == "by spinach" or desc.Text == "Street Hub") then
+                            pcall(function() sg:Destroy() end)
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+end)
+
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local _origNotify = Fluent.Notify
+Fluent.Notify = function(self, config)
+    pcall(function() _origNotify(self, config) end)
+end
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/SaveManager.lua"))()
+local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Addons/InterfaceManager.lua"))()
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
+
+local LocalPlayer = Players.LocalPlayer
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local GameRemotes = Remotes:WaitForChild("Game")
+
+local EggsDB = {}
+local EggsDB_Data = {}
+pcall(function()
+    local module = require(ReplicatedStorage:WaitForChild("GameData"):WaitForChild("Eggs"))
+    EggsDB_Data = module
+    for name, data in pairs(module) do
+        if type(data) == "table" and data.Rarity then
+            EggsDB[name] = data.Rarity
+        end
+    end
+end)
+
+local General = nil
+local General2 = nil
+local DayNight = nil
+local HatchInteraction = nil
+
+pcall(function()
+    General = require(ReplicatedStorage.GameServices.General)
+end)
+pcall(function()
+    General2 = require(ReplicatedStorage.GameData.General)
+end)
+pcall(function()
+    DayNight = require(ReplicatedStorage.GameServices.DayNight)
+end)
+pcall(function()
+    HatchInteraction = require(LocalPlayer.PlayerScripts.Game.EggHatching.HatchInteraction)
+end)
+
+local RarityList = {"Common", "Rare", "Epic", "Legendary", "Mythic", "Divine", "Ethereal"}
+
+local RarityWeights = {
+    Ethereal = 7,
+    Divine = 6,
+    Mythic = 5,
+    Legendary = 4,
+    Epic = 3,
+    Rare = 2,
+    Common = 1
+}
+
+local function GetOnlyTrueKeys(tbl)
+    local result = {}
+    if type(tbl) == "table" then
+        for k, v in pairs(tbl) do
+            if v == true then
+                result[k] = true
+            end
+        end
+    end
+    return result
+end
+
+if _G.RideAPetSessionActive then
+    _G.RideAPetSessionActive = false
+    task.wait(0.2)
+end
+if _G.RideAPetGUI then
+    pcall(function() _G.RideAPetGUI:Destroy() end)
+    _G.RideAPetGUI = nil
+end
+if _G.StreetHubToggleGui then
+    pcall(function() _G.StreetHubToggleGui:Destroy() end)
+    _G.StreetHubToggleGui = nil
+end
+pcall(function()
+    for _, obj in pairs(getgc(true)) do
+        if type(obj) == "table" and rawget(obj, "Registry") and type(rawget(obj, "Registry")) == "table" then
+            table.clear(obj.Registry)
+        end
+    end
+end)
+local currentSessionId = os.clock()
+_G.RideAPetSessionId = currentSessionId
+_G.RideAPetSessionActive = true
+
+local function IsSessionAlive()
+    return _G.RideAPetSessionActive == true and _G.RideAPetSessionId == currentSessionId
+end
+
+local Config = {
+    Language = "Thai",
+    AutoCollectCash = true,
+    TeleportCollectEggs = false,
+    ReturnHomeAfterCollect = true,
+    SelectedRarities = {
+        Common = false,
+        Rare = true,
+        Epic = true,
+        Legendary = true,
+        Mythic = true,
+        Divine = true,
+        Ethereal = true
+    },
+    AutoHatchReady = true,
+    AutoPlaceEggs = true,
+    PlaceRarities = {
+        Common = true,
+        Rare = true,
+        Epic = true,
+        Legendary = true,
+        Mythic = true,
+        Divine = true,
+        Ethereal = true
+    },
+    MaxPlotEggs = 10,
+    AutoHatchLuck = true,
+    AutoRebirth = false,
+    AutoClaimIndex = true,
+    AutoPlaceBest = true,
+    CollectDelay = 0.35,
+    WalkSpeed = 32,
+    JumpPower = 75,
+    CustomSpeed = false,
+
+    -- Volcano Event Settings
+    AutoVolcanoDip = false,
+    SnipeVolcanicEgg = true,
+
+    -- UI Settings
+    ShowFloatingButton = true,
+    UiWidth = 560,
+    UiHeight = 470
+}
+
+local Locales = {
+    EN = {
+        -- Tabs
+        TabEggFarm = "Egg Farm",
+        TabRanch = "Ranch & Hatch",
+        TabPassive = "Passive & Auto",
+        TabEvents = "Volcano Event",
+        TabPlayer = "Player",
+        TabSettings = "Settings",
+
+        -- Egg Farm
+        TeleportCollectEggs_Title = "Auto TP Collect Eggs",
+        TeleportCollectEggs_Desc = "Teleport character to spawn point & pick up target eggs",
+        ReturnHomeAfterCollect_Title = "Auto Return Home",
+        ReturnHomeAfterCollect_Desc = "Always warp back to Plot after sweeping eggs or when basket is full",
+        CollectDelay_Title = "Teleport Delay (seconds)",
+        CollectDelay_Desc = "Delay before warping to the next egg",
+        EggRarities_Title = "Collect Rarities (Multi)",
+        EggRarities_Desc = "Select egg rarities to collect",
+
+        -- Ranch & Hatch
+        AutoPlaceEggs_Title = "Auto Place Eggs In Plot",
+        AutoPlaceEggs_Desc = "Automatically equip and place matching eggs into plot",
+        PlaceEggRarities_Title = "Place In Plot Rarities (Multi)",
+        PlaceEggRarities_Desc = "Select egg rarities to place in plot",
+        MaxPlotEggs_Title = "Max Eggs in Plot",
+        MaxPlotEggs_Desc = "Maximum simultaneous eggs allowed in plot (Game limit: 10/10)",
+        AutoHatchReady_Title = "Auto Hatch Ready Eggs",
+        AutoHatchReady_Desc = "Automatically hatch mature eggs in your plot (Smart Check)",
+        AutoHatchLuck_Title = "Auto Hatch Luck Upgrade",
+        AutoHatchLuck_Desc = "Automatically buy max Hatch Luck upgrades every 10s (Cash & Free)",
+        AutoPlaceBest_Title = "Auto Place Best",
+        AutoPlaceBest_Desc = "Automatically equip & place your best pets into the ranch",
+        BtnTeleportPlot_Title = "Teleport To Plot",
+        BtnTeleportPlot_Desc = "Instant shortcut to warp to your claimed plot",
+
+        -- Passive & Auto
+        AutoCollectCash_Title = "Auto Collect Cash",
+        AutoCollectCash_Desc = "Collect coins generated by all your pets",
+        AutoRebirth_Title = "Auto Rebirth",
+        AutoRebirth_Desc = "Automatically trigger rebirth when eligible",
+        AutoClaimIndex_Title = "Auto Claim Index",
+        AutoClaimIndex_Desc = "Automatically claim cash rewards when unlocking new pets in Index",
+
+        -- Volcano Event Tab
+        VolcanoStatus_Title = "Volcano Crater Status",
+        VolcanoStatus_Loading = "Loading volcano status...",
+        VolcanoStatus_Content = "Volcano Status: %s\nDistance to Crater: %s studs (%s)\nSacrifice Reward: 15%% Magma Mutation (x900 Power)\nLocation: Volcano Summit Crater",
+        BtnRefreshVolcano_Title = "Refresh Volcano Status",
+        BtnRefreshVolcano_Desc = "Check player distance and crater active status",
+        BtnWarpVolcano_Title = "Teleport To Volcano Crater",
+        BtnWarpVolcano_Desc = "Instantly warp to the volcano summit sacrifice pool",
+        BtnVolcanoDip_Title = "Sacrifice Held Egg (15% Magma)",
+        BtnVolcanoDip_Desc = "Dip held egg into lava pool to attempt Magma Mutation",
+        ToggleAutoVolcanoDip_Title = "Auto Sacrifice Egg (Auto Dip)",
+        ToggleAutoVolcanoDip_Desc = "Automatically sacrifice held egg when within 400 studs of crater",
+        ToggleSnipeVolcanicEgg_Title = "Auto Snipe Volcanic Eggs",
+        ToggleSnipeVolcanicEgg_Desc = "Prioritize teleporting to collect rare Volcanic Eggs when they spawn",
+
+        -- Player
+        CustomSpeed_Title = "Enable Custom Movement",
+        CustomSpeed_Desc = "Customize walk speed and jump power",
+        WalkSpeed_Title = "WalkSpeed",
+        WalkSpeed_Desc = "Set player walk speed",
+        JumpPower_Title = "JumpPower",
+        JumpPower_Desc = "Set player jump power",
+
+        -- Settings
+        Language_Title = "Language / เลือกภาษา",
+        Language_Desc = "Select interface language",
+        AccountSave_Title = "Account Auto Save",
+        AccountSave_Content = "Account: %s (ID: %s)\nStatus: Auto-Save Active\nPath: RideAPetConfigs/%s_%s.json\nAll settings, toggles, sliders, and rarities are automatically saved.",
+        BtnManualSave_Title = "Manual Save Now",
+        BtnManualSave_Desc = "Instantly write all current settings to account file",
+        BtnResetDefaults_Title = "Reset to Default Settings",
+        BtnResetDefaults_Desc = "Restore default recommended settings for this account",
+        ToggleFloatingButton_Title = "Floating Toggle Button (Mobile/PC)",
+        ToggleFloatingButton_Desc = "Show a draggable floating button on screen to toggle the UI anytime",
+        UiToggleInfo_Title = "UI Open/Close Controls (PC & Mobile)",
+        UiToggleInfo_Content = "• Mobile: Tap the floating 🌋 Street Hub button to show/hide the menu. Press & hold to drag and reposition it anywhere on your screen.\n• PC: Press LeftControl, RightControl, or Insert on your keyboard to instantly toggle the UI, or simply click the floating button with your mouse.",
+
+        -- Notifications
+        NotifyLangChanged = "Language switched to English",
+        NotifySaved = "Saved current settings for %s",
+        NotifyReset = "Settings reset to defaults!",
+        NotifyPlaceBest_Title = "Place Best",
+        NotifyPlaceBest_Content = "Auto Place Best enabled & triggered!",
+        NotifyAutoTpEgg_Title = "Auto TP Egg",
+        NotifyAutoTpEgg_Content = "Started collecting eggs by filter!",
+        NotifyIndexReward_Title = "Index Reward",
+        NotifyIndexReward_Content = "Claimed Index Reward for Stage %s!",
+        NotifyAutoSave_Title = "Auto Save",
+        NotifyLoaded = "Loaded for %s with Auto-Save enabled!",
+        NotifyVolcanoWarp_Title = "Volcano Warp",
+        NotifyVolcanoWarp_Content = "Teleported to Volcano Crater summit!",
+        NotifyVolcanoDip_Title = "Volcano Sacrifice",
+        NotifyVolcanoDip_Content = "Sacrificing egg into lava pool! Checking for Magma mutation...",
+        NotifySnipeEgg_Title = "Volcanic Egg Sniped",
+        NotifySnipeEgg_Content = "Successfully collected rare Volcanic Egg!"
+    },
+    TH = {
+        -- Tabs
+        TabEggFarm = "ฟาร์มไข่",
+        TabRanch = "แปลง & ฟักไข่",
+        TabPassive = "อัตโนมัติ & ทั่วไป",
+        TabEvents = "อีเวนต์ภูเขาไฟ",
+        TabPlayer = "ตัวละคร",
+        TabSettings = "การตั้งค่า",
+
+        -- Egg Farm
+        TeleportCollectEggs_Title = "วาร์ปเก็บไข่อัตโนมัติ",
+        TeleportCollectEggs_Desc = "วาร์ปตัวละครไปยังจุดเกิดไข่และเก็บไข่ตามระดับที่เลือก",
+        ReturnHomeAfterCollect_Title = "วาร์ปกลับแปลงอัตโนมัติ",
+        ReturnHomeAfterCollect_Desc = "วาร์ปกลับแปลงฟาร์มเสมอเมื่อเก็บไข่เสร็จหรือตะกร้าเต็ม",
+        CollectDelay_Title = "ความหน่วงการวาร์ป (วินาที)",
+        CollectDelay_Desc = "ระยะเวลาหน่วงก่อนวาร์ปไปเก็บไข่ใบถัดไป",
+        EggRarities_Title = "ระดับไข่ที่เก็บ (เลือกหลายอัน)",
+        EggRarities_Desc = "เลือกระดับความหายากของไข่ที่ต้องการเก็บ",
+
+        -- Ranch & Hatch
+        AutoPlaceEggs_Title = "วางไข่ลงแปลงอัตโนมัติ",
+        AutoPlaceEggs_Desc = "ถือและวางไข่ที่เลือกลงในแปลงโดยอัตโนมัติ",
+        PlaceEggRarities_Title = "ระดับไข่ที่จะวาง (เลือกหลายอัน)",
+        PlaceEggRarities_Desc = "เลือกระดับความหายากของไข่ที่จะนำไปวางในแปลง",
+        MaxPlotEggs_Title = "จำนวนไข่สูงสุดในแปลง",
+        MaxPlotEggs_Desc = "จำกัดจำนวนไข่ในแปลงพร้อมกัน (เกมจำกัดสูงสุด 10/10)",
+        AutoHatchReady_Title = "ฟักไข่ที่โตเต็มที่อัตโนมัติ",
+        AutoHatchReady_Desc = "ฟักไข่ในแปลงทันทีที่โตพร้อมฟัก (ตรวจเช็คอัจฉริยะ)",
+        AutoHatchLuck_Title = "อัปเกรดดวงฟักไข่อัตโนมัติ",
+        AutoHatchLuck_Desc = "ซื้ออัปเกรดดวงฟักไข่สูงสุดทุกๆ 10 วิ (เงิน & ฟรี)",
+        AutoPlaceBest_Title = "วางสัตว์เลี้ยงที่ดีที่สุดอัตโนมัติ",
+        AutoPlaceBest_Desc = "สวมใส่และวางสัตว์เลี้ยงที่พลังสูงสุดลงแปลงอัตโนมัติ",
+        BtnTeleportPlot_Title = "วาร์ปกลับแปลงทันที",
+        BtnTeleportPlot_Desc = "ปุ่มลัดวาร์ปไปยังแปลงฟาร์มของคุณทันที",
+
+        -- Passive & Auto
+        AutoCollectCash_Title = "เก็บเงินจากสัตว์เลี้ยงอัตโนมัติ",
+        AutoCollectCash_Desc = "เก็บเงิน/เหรียญที่สัตว์เลี้ยงผลิตในแปลงอัตโนมัติ",
+        AutoRebirth_Title = "รีเบิร์ธอัตโนมัติ",
+        AutoRebirth_Desc = "กดรีเบิร์ธอัตโนมัติเมื่อเลเวลและเงินพร้อม",
+        AutoClaimIndex_Title = "รับรางวัลสมุดสะสมอัตโนมัติ",
+        AutoClaimIndex_Desc = "กดรับเงินรางวัลในสมุดสะสมสัตว์เลี้ยงทันทีที่มีสัตว์ใหม่",
+
+        -- Volcano Event Tab
+        VolcanoStatus_Title = "สถานะปล่องภูเขาไฟ",
+        VolcanoStatus_Loading = "กำลังตรวจสอบสถานะภูเขาไฟ...",
+        VolcanoStatus_Content = "สถานะภูเขาไฟ: %s\nระยะห่างจากปล่อง: %s studs (%s)\nผลตอบแทนการสังเวย: โอกาส 15%% ได้ Magma Mutation (พลัง x900)\nตำแหน่ง: ยอดปล่องภูเขาไฟ",
+        BtnRefreshVolcano_Title = "อัปเดตสถานะภูเขาไฟ",
+        BtnRefreshVolcano_Desc = "ตรวจสอบระยะห่างจากปล่องและสถานะเปิดของภูเขาไฟ",
+        BtnWarpVolcano_Title = "วาร์ปไปยังปล่องภูเขาไฟ",
+        BtnWarpVolcano_Desc = "วาร์ปขึ้นสู่ยอดปล่องภูเขาไฟเพื่อเตรียมสังเวยไข่ทันที",
+        BtnVolcanoDip_Title = "โยนไข่ลงลาวา (ลุ้น Magma x900)",
+        BtnVolcanoDip_Desc = "จุ่มไข่ที่ถืออยู่ลงปล่องลาวาทันที เพื่อลุ้นรับกลายพันธุ์ Magma (โอกาส 15%)",
+        ToggleAutoVolcanoDip_Title = "โยนไข่อัตโนมัติ (Auto Dip)",
+        ToggleAutoVolcanoDip_Desc = "จุ่มไข่ลงลาวาให้อัตโนมัติทันทีที่ตัวละครอยู่ในระยะ 400 studs ของปล่อง",
+        ToggleSnipeVolcanicEgg_Title = "ตามเก็บไข่ภูเขาไฟทันที (Volcanic Egg)",
+        ToggleSnipeVolcanicEgg_Desc = "ให้ความสำคัญสูงสุดในการวาร์ปไปเก็บไข่ภูเขาไฟทันทีที่เกิดในแมพ",
+
+        -- Player
+        CustomSpeed_Title = "เปิดใช้งานความเร็วพิเศษ",
+        CustomSpeed_Desc = "ปรับแต่งความเร็วเดินและแรงกระโดดตามต้องการ",
+        WalkSpeed_Title = "ความเร็วเดิน (WalkSpeed)",
+        WalkSpeed_Desc = "กำหนดความเร็วเดินของตัวละคร",
+        JumpPower_Title = "แรงกระโดด (JumpPower)",
+        JumpPower_Desc = "กำหนดแรงกระโดดของตัวละคร",
+
+        -- Settings
+        Language_Title = "เลือกภาษา / Language",
+        Language_Desc = "เลือกภาษาของหน้าต่างเมนู",
+        AccountSave_Title = "ระบบบันทึกอัตโนมัติ",
+        AccountSave_Content = "ผู้เล่น: %s (ID: %s)\nสถานะ: ทำงานอยู่\nไฟล์: RideAPetConfigs/%s_%s.json\nบันทึกทุกค่าการตั้งค่าอัตโนมัติ",
+        BtnManualSave_Title = "บันทึกการตั้งค่าตอนนี้",
+        BtnManualSave_Desc = "บันทึกการตั้งค่าทั้งหมดลงในไฟล์ทันที",
+        BtnResetDefaults_Title = "รีเซ็ตเป็นค่าเริ่มต้น",
+        BtnResetDefaults_Desc = "คืนค่าการตั้งค่าที่แนะนำสำหรับบัญชีนี้",
+        ToggleFloatingButton_Title = "ปุ่มลอยเปิด-ปิด UI (มือถือ/PC)",
+        ToggleFloatingButton_Desc = "แสดงปุ่มลอยบนหน้าจอที่สามารถลากย้ายได้เพื่อเปิด-ปิด UI ทุกเมื่อ",
+        UiToggleInfo_Title = "วิธีเปิด-ปิด เมนู UI (PC & มือถือ)",
+        UiToggleInfo_Content = "• มือถือ (Mobile): แตะที่ปุ่มลอย 🌋 Street Hub บนหน้าจอเพื่อเปิด-ปิดเมนู สามารถกดค้างแล้วลากย้ายตำแหน่งได้อิสระ\n• คอมพิวเตอร์ (PC): กดปุ่ม LeftControl, RightControl หรือ Insert บนคีย์บอร์ดเพื่อเปิด-ปิดทันที หรือคลิกที่ปุ่มลอยด้วยเมาส์",
+
+        -- Notifications
+        NotifyLangChanged = "เปลี่ยนภาษาเป็น ภาษาไทย เรียบร้อยแล้ว",
+        NotifySaved = "บันทึกการตั้งค่าสำหรับ %s เรียบร้อยแล้ว",
+        NotifyReset = "รีเซ็ตการตั้งค่าเป็นค่าเริ่มต้นแล้ว!",
+        NotifyPlaceBest_Title = "วางสัตว์เลี้ยง",
+        NotifyPlaceBest_Content = "เปิดใช้งานและวางสัตว์เลี้ยงที่ดีที่สุดแล้ว!",
+        NotifyAutoTpEgg_Title = "วาร์ปเก็บไข่",
+        NotifyAutoTpEgg_Content = "เริ่มเก็บไข่ตามตัวกรองแล้ว!",
+        NotifyIndexReward_Title = "รางวัลสมุดสะสม",
+        NotifyIndexReward_Content = "รับรางวัลสมุดสะสมระดับ %s เรียบร้อย!",
+        NotifyAutoSave_Title = "ระบบบันทึก",
+        NotifyLoaded = "โหลดสคริปต์สำหรับ %s พร้อมระบบบันทึกอัตโนมัติ!",
+        NotifyVolcanoWarp_Title = "วาร์ปภูเขาไฟ",
+        NotifyVolcanoWarp_Content = "วาร์ปขึ้นสู่ยอดปล่องภูเขาไฟเรียบร้อยแล้ว!",
+        NotifyVolcanoDip_Title = "สังเวยไข่ภูเขาไฟ",
+        NotifyVolcanoDip_Content = "ส่งคำขอจุ่มไข่ลงลาวา กำลังตรวจสอบผล Magma...",
+        NotifySnipeEgg_Title = "เก็บไข่ภูเขาไฟสำเร็จ",
+        NotifySnipeEgg_Content = "วาร์ปเก็บไข่ภูเขาไฟ (Volcanic Egg) เรียบร้อยแล้ว!"
+    }
+}
+
+local function GetText(key, ...)
+    local lang = (Config.Language == "English") and "EN" or "TH"
+    local str = (Locales[lang] and Locales[lang][key]) or (Locales.EN and Locales.EN[key]) or key
+    if select("#", ...) > 0 then
+        return string.format(str, ...)
+    end
+    return str
+end
+
+local function GetVolcanoStatusText()
+    local RS = game:GetService("ReplicatedStorage")
+    local SD = RS:FindFirstChild("ServerData")
+    local revealed = (SD and SD:GetAttribute("VolcanoRevealed") == true)
+    local statusStr = revealed and ((Config.Language == "English") and "Active / Revealed" or "เปิดอยู่ (Active)") or ((Config.Language == "English") and "Hidden" or "ซ่อนอยู่ (Hidden)")
+
+    local distStr = "--"
+    local inRangeStr = (Config.Language == "English") and "Not In Range" or "อยู่นอกระยะ"
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local volcanoPos = Vector3.new(-5102.84, 41405.63, -3489.11)
+    if root then
+        local dist = math.floor((root.Position - volcanoPos).Magnitude)
+        distStr = tostring(dist)
+        if dist <= 400 then
+            inRangeStr = (Config.Language == "English") and "In Sacrificial Range!" or "อยู่ในระยะโยนไข่!"
+        else
+            inRangeStr = (Config.Language == "English") and "Too Far (Warp Needed)" or "ไกลเกินไป (ต้องวาร์ป)"
+        end
+    end
+
+    return GetText("VolcanoStatus_Content", statusStr, distStr, inRangeStr)
+end
+
+local accountFolder = "RideAPetConfigs"
+local accountFileName = string.format("%s/%s_%s.json", accountFolder, LocalPlayer.Name, tostring(LocalPlayer.UserId))
+local isInitialLoading = true
+
+local function LoadAccountConfig()
+    pcall(function()
+        if isfile and isfile(accountFileName) then
+            local raw = readfile(accountFileName)
+            local decoded = HttpService:JSONDecode(raw)
+            if type(decoded) == "table" then
+                for k, v in pairs(decoded) do
+                    if Config[k] ~= nil then
+                        if type(Config[k]) == "table" and type(v) == "table" then
+                            for subK, subV in pairs(v) do
+                                Config[k][subK] = subV
+                            end
+                        else
+                            Config[k] = v
+                        end
+                    end
+                end
+                if decoded.EggRarities and type(decoded.EggRarities) == "table" then
+                    for subK, subV in pairs(decoded.EggRarities) do
+                        Config.SelectedRarities[subK] = subV
+                    end
+                end
+                if decoded.PlaceEggRarities and type(decoded.PlaceEggRarities) == "table" then
+                    for subK, subV in pairs(decoded.PlaceEggRarities) do
+                        Config.PlaceRarities[subK] = subV
+                    end
+                end
+                if decoded.AutoVolcanoDip ~= nil then
+                    Config.AutoVolcanoDip = decoded.AutoVolcanoDip
+                end
+                if decoded.SnipeVolcanicEgg ~= nil then
+                    Config.SnipeVolcanicEgg = decoded.SnipeVolcanicEgg
+                end
+                if decoded.ShowFloatingButton ~= nil then
+                    Config.ShowFloatingButton = decoded.ShowFloatingButton
+                end
+                if decoded.UiWidth ~= nil then
+                    Config.UiWidth = tonumber(decoded.UiWidth) or 560
+                end
+                if decoded.UiHeight ~= nil then
+                    Config.UiHeight = tonumber(decoded.UiHeight) or 470
+                end
+            end
+        end
+    end)
+end
+
+LoadAccountConfig()
+
+local isSaving = false
+local function SaveAccountConfig(immediate)
+    if isInitialLoading then return end
+    if not (writefile and makefolder and isfolder) then return end
+    local function executeSave()
+        pcall(function()
+            if not isfolder(accountFolder) then
+                makefolder(accountFolder)
+            end
+            writefile(accountFileName, HttpService:JSONEncode(Config))
+        end)
+    end
+
+    if immediate then
+        executeSave()
+        return
+    end
+
+    if isSaving then return end
+    isSaving = true
+    task.defer(function()
+        isSaving = false
+        executeSave()
+    end)
+end
+
+local function GetPlayerPlot()
+    if General and General.GetPlot then
+        local p = General:GetPlot(LocalPlayer)
+        if p then return p end
+    end
+
+    local plots = workspace:FindFirstChild("Plots")
+    if not plots then return nil end
+    for _, plot in ipairs(plots:GetChildren()) do
+        local data = plot:FindFirstChild("Data")
+        if data then
+            for _, c in ipairs(data:GetChildren()) do
+                if c:IsA("ValueBase") and c.Value == LocalPlayer then
+                    return plot
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function ReturnToPlot()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local plot = GetPlayerPlot()
+    if not (char and root and plot) then return false end
+
+    local baseplate = plot:FindFirstChild("Baseplate")
+    local targetCFrame = baseplate and (baseplate.CFrame * CFrame.new(0, 5, 0)) or (plot:GetPivot() * CFrame.new(0, 5, 0))
+    local targetPos = targetCFrame.Position
+
+    for i = 1, 4 do
+        char:PivotTo(targetCFrame)
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        task.wait(0.04)
+    end
+
+    local TeleportToPlot = GameRemotes:FindFirstChild("TeleportToPlot")
+    if TeleportToPlot then
+        local basket = LocalPlayer:FindFirstChild("Basket")
+        if not (basket and #basket:GetChildren() > 0) then
+            pcall(function()
+                TeleportToPlot:FireServer()
+            end)
+        end
+    end
+
+    local dist = (root.Position - targetPos).Magnitude
+    return dist < 25
+end
+
+local function TriggerPlaceBest()
+    pcall(function()
+        local pt = LocalPlayer.PlayerGui:FindFirstChild("Main") and LocalPlayer.PlayerGui.Main:FindFirstChild("PetsTracker")
+        local pb = pt and pt:FindFirstChild("PlaceBest", true)
+        if pb then
+            if firesignal then
+                firesignal(pb.Activated)
+            else
+                for _, conn in ipairs(getconnections(pb.Activated)) do
+                    conn:Fire()
+                end
+            end
+        end
+    end)
+end
+
+local function GetBasketInfo()
+    local basket = LocalPlayer:FindFirstChild("Basket")
+    local cur = basket and #basket:GetChildren() or 0
+    local cap = 1
+    pcall(function()
+        local eq = LocalPlayer:FindFirstChild("SavedData") and LocalPlayer.SavedData:FindFirstChild("EquippedEggBasket")
+        local bMod = require(ReplicatedStorage.GameData.EggBaskets)
+        if eq and bMod[eq.Value] and bMod[eq.Value].Capacity then
+            cap = bMod[eq.Value].Capacity
+        end
+    end)
+    return cur, cap
+end
+
+local function IsEggReadyToHatch(eggModel)
+    if not eggModel or not eggModel.PrimaryPart or eggModel:HasTag("Hatching") then
+        return false
+    end
+    local eggKey = eggModel:GetAttribute("EggKey")
+    if not eggKey then return false end
+
+    local eggData = eggModel:FindFirstChild("EggData")
+    local placeTime = eggData and eggData:FindFirstChild("PlaceTime")
+    local weight = eggData and eggData:FindFirstChild("Weight")
+    local eggDef = EggsDB_Data[eggModel.Name]
+    if not (eggDef and placeTime and placeTime.Value > 0) then
+        return false
+    end
+
+    local elapsed = 0
+    if eggModel:GetAttribute("FlatGrow") == true then
+        elapsed = workspace:GetServerTimeNow() - placeTime.Value
+    elseif DayNight and DayNight.GrowthElapsed then
+        elapsed = DayNight.GrowthElapsed(placeTime.Value)
+    else
+        elapsed = workspace:GetServerTimeNow() - placeTime.Value
+    end
+
+    local required = eggDef.GrowthTime or 0
+    if General2 and General2.GrowthTimeFor then
+        required = General2.GrowthTimeFor(eggDef.GrowthTime, weight and weight.Value or 1)
+    end
+
+    return elapsed >= required
+end
+
+-- 1. Auto Collect Pet Income
+task.spawn(function()
+    local PetRenderer = nil
+    pcall(function()
+        PetRenderer = require(LocalPlayer.PlayerScripts.Game.Pets.PetRenderer)
+    end)
+    
+    while task.wait(0.2) and IsSessionAlive() do
+        if Config.AutoCollectCash and GameRemotes:FindFirstChild("PetCollect") then
+            if PetRenderer then
+                for _, pet in pairs(PetRenderer.GetAll()) do
+                    if pet.OwnerUserId == LocalPlayer.UserId and pet.PetKey then
+                        pcall(function()
+                            GameRemotes.PetCollect:FireServer(pet.PetKey)
+                        end)
+                    end
+                end
+            else
+                pcall(function()
+                    GameRemotes.PetCollect:FireServer()
+                end)
+            end
+        end
+    end
+end)
+
+-- 2. Precision Auto Teleport Egg Collector
+task.spawn(function()
+    local ServerData = ReplicatedStorage:FindFirstChild("ServerData") or ReplicatedStorage
+    local ActiveEggs = ServerData:FindFirstChild("ActiveEggs")
+    local EggPickup = GameRemotes:FindFirstChild("EggPickup")
+    local renderedFolder = workspace:FindFirstChild("RenderedEggs")
+    local failedEggs = {}
+
+    local function ParsePosition(val)
+        if typeof(val) == "Vector3" then return val end
+        if type(val) == "string" then
+            local c = string.split(val, ",")
+            if #c == 3 then
+                local x = tonumber(c[1])
+                local y = tonumber(c[2])
+                local z = tonumber(c[3])
+                if x and y and z then return Vector3.new(x, y, z) end
+            end
+        end
+        return nil
+    end
+
+    local function FindMatchingActiveEgg(eggName, pos)
+        if not ActiveEggs then return nil end
+        for _, aEgg in ipairs(ActiveEggs:GetChildren()) do
+            if aEgg:GetAttribute("Egg") == eggName then
+                local aPos = ParsePosition(aEgg:GetAttribute("Position"))
+                if aPos and (Vector3.new(aPos.X, 0, aPos.Z) - Vector3.new(pos.X, 0, pos.Z)).Magnitude < 4 then
+                    return aEgg
+                end
+            end
+        end
+        return nil
+    end
+
+    while task.wait(0.15) and IsSessionAlive() do
+        if (Config.TeleportCollectEggs or Config.SnipeVolcanicEgg) and EggPickup then
+            local char = LocalPlayer.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+
+            if root then
+                local curCount, maxCapacity = GetBasketInfo()
+                if curCount >= maxCapacity then
+                    ReturnToPlot()
+                    local depositT0 = os.clock()
+                    while #LocalPlayer.Basket:GetChildren() > 0 and (os.clock() - depositT0 < 3.5) and IsSessionAlive() do
+                        task.wait(0.12)
+                    end
+                    task.wait(0.2)
+                else
+                    local nowTime = os.clock()
+                    for id, expire in pairs(failedEggs) do
+                        if nowTime > expire then
+                            failedEggs[id] = nil
+                        end
+                    end
+
+                    renderedFolder = workspace:FindFirstChild("RenderedEggs")
+                    local candidates = {}
+
+                    if renderedFolder then
+                        for _, rEgg in ipairs(renderedFolder:GetChildren()) do
+                            local eName = rEgg.Name
+                            local rarity = EggsDB[eName] or "Common"
+                            local isVolcanoEgg = Config.SnipeVolcanicEgg and (eName == "Volcanic Egg")
+                            local isNormalTarget = Config.TeleportCollectEggs and (Config.SelectedRarities[rarity] == true)
+
+                            if isVolcanoEgg or isNormalTarget then
+                                local rPos = rEgg:GetPivot().Position
+                                local active = FindMatchingActiveEgg(eName, rPos)
+                                local activeId = active and active.Name or eName
+                                if not failedEggs[activeId] then
+                                    local prompt = rEgg:FindFirstChildWhichIsA("ProximityPrompt", true)
+                                    table.insert(candidates, {
+                                        model = rEgg,
+                                        name = eName,
+                                        rarity = rarity,
+                                        pos = rPos,
+                                        activeName = active and active.Name,
+                                        prompt = prompt,
+                                        isVolcano = isVolcanoEgg,
+                                        dist = (Vector3.new(rPos.X, 0, rPos.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude
+                                    })
+                                end
+                            end
+                        end
+                    end
+
+                    if #candidates == 0 and ActiveEggs then
+                        local serverNow = workspace:GetServerTimeNow()
+                        for _, aEgg in ipairs(ActiveEggs:GetChildren()) do
+                            local eName = aEgg:GetAttribute("Egg")
+                            local rarity = EggsDB[eName] or "Common"
+                            local dropEnds = tonumber(aEgg:GetAttribute("DropEndsAt")) or 0
+                            local aPos = ParsePosition(aEgg:GetAttribute("Position"))
+                            local isVolcanoEgg = Config.SnipeVolcanicEgg and (eName == "Volcanic Egg")
+                            local isNormalTarget = Config.TeleportCollectEggs and (Config.SelectedRarities[rarity] == true)
+
+                            if (isVolcanoEgg or isNormalTarget) and dropEnds <= serverNow and aPos and not failedEggs[aEgg.Name] then
+                                table.insert(candidates, {
+                                    model = nil,
+                                    name = eName,
+                                    rarity = rarity,
+                                    pos = aPos,
+                                    activeName = aEgg.Name,
+                                    prompt = nil,
+                                    isVolcano = isVolcanoEgg,
+                                    dist = (Vector3.new(aPos.X, 0, aPos.Z) - Vector3.new(root.Position.X, 0, root.Position.Z)).Magnitude
+                                })
+                            end
+                        end
+                    end
+
+                    if #candidates > 0 then
+                        table.sort(candidates, function(a, b)
+                            if a.isVolcano ~= b.isVolcano then
+                                return a.isVolcano == true
+                            end
+                            local wA = RarityWeights[a.rarity] or 0
+                            local wB = RarityWeights[b.rarity] or 0
+                            if wA ~= wB then
+                                return wA > wB
+                            end
+                            return a.dist < b.dist
+                        end)
+
+                        local target = candidates[1]
+                        local targetPos = target.pos
+                        local activeId = target.activeName or target.name
+
+                        char:PivotTo(CFrame.new(targetPos + Vector3.new(0, 1.8, 0)))
+                        root.AssemblyLinearVelocity = Vector3.zero
+                        root.AssemblyAngularVelocity = Vector3.zero
+                        task.wait(0.18)
+
+                        local initialBasket = #LocalPlayer.Basket:GetChildren()
+
+                        if target.prompt and fireproximityprompt then
+                            pcall(function()
+                                fireproximityprompt(target.prompt)
+                            end)
+                        end
+                        if target.activeName then
+                            pcall(function()
+                                EggPickup:FireServer(target.activeName)
+                            end)
+                        end
+
+                        local pickedUp = false
+                        local t0 = os.clock()
+                        while (os.clock() - t0 < 0.65) and IsSessionAlive() do
+                            task.wait(0.06)
+                            if #LocalPlayer.Basket:GetChildren() > initialBasket then
+                                pickedUp = true
+                                break
+                            end
+                            if target.model and target.model.Parent == nil then
+                                pickedUp = true
+                                break
+                            end
+                        end
+
+                        if not pickedUp then
+                            failedEggs[activeId] = os.clock() + 20
+                        elseif target.isVolcano then
+                            Fluent:Notify({
+                                Title = GetText("NotifySnipeEgg_Title"),
+                                Content = GetText("NotifySnipeEgg_Content"),
+                                Duration = 3.5
+                            })
+                        end
+
+                        local newCur, newCap = GetBasketInfo()
+                        if newCur >= newCap then
+                            task.wait(0.08)
+                            ReturnToPlot()
+                            local depositStart = os.clock()
+                            while #LocalPlayer.Basket:GetChildren() > 0 and (os.clock() - depositStart < 3.5) and IsSessionAlive() do
+                                task.wait(0.12)
+                            end
+                            task.wait(0.2)
+                        else
+                            task.wait(Config.CollectDelay)
+                        end
+                    else
+                        if Config.ReturnHomeAfterCollect then
+                            local plot = GetPlayerPlot()
+                            if plot and root then
+                                local baseplate = plot:FindFirstChild("Baseplate")
+                                local homePos = baseplate and baseplate.Position or plot:GetPivot().Position
+                                local dist = (root.Position - homePos).Magnitude
+                                if dist > 30 then
+                                    ReturnToPlot()
+                                end
+                            end
+                        end
+                        task.wait(1.0)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- 3. Auto Hatch Ready Eggs
+task.spawn(function()
+    local HatchRemote = GameRemotes:FindFirstChild("Hatch")
+    while task.wait(1.0) and IsSessionAlive() do
+        if Config.AutoHatchReady and HatchRemote then
+            local plot = GetPlayerPlot()
+            local eggContainer = plot and plot:FindFirstChild("Eggs")
+            if eggContainer then
+                for _, eggModel in ipairs(eggContainer:GetChildren()) do
+                    if IsEggReadyToHatch(eggModel) then
+                        local char = LocalPlayer.Character
+                        local root = char and char:FindFirstChild("HumanoidRootPart")
+                        local eggPos = eggModel:GetPivot().Position
+                        if char and root then
+                            char:PivotTo(CFrame.new(eggPos + Vector3.new(0, 2, 0)))
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            task.wait(0.15)
+                        end
+
+                        local requested = false
+                        if HatchInteraction and HatchInteraction.Request then
+                            pcall(function()
+                                requested = HatchInteraction.Request(eggModel)
+                            end)
+                        end
+                        if not requested then
+                            local eggKey = eggModel:GetAttribute("EggKey")
+                            if eggKey then
+                                pcall(function()
+                                    HatchRemote:FireServer({ EggKey = eggKey })
+                                end)
+                            end
+                        end
+                        if Config.AutoPlaceBest then
+                            task.delay(1.2, function()
+                                if IsSessionAlive() and Config.AutoPlaceBest then
+                                    TriggerPlaceBest()
+                                end
+                            end)
+                        end
+                        task.wait(0.5)
+                        break
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- 4. Auto Place Eggs
+task.spawn(function()
+    local EggPlaced = GameRemotes:FindFirstChild("EggPlaced")
+    while task.wait(1.0) and IsSessionAlive() do
+        if Config.AutoPlaceEggs and EggPlaced then
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            local plot = GetPlayerPlot()
+
+            if hum and plot then
+                local eggContainer = plot:FindFirstChild("Eggs")
+                local curPlotEggs = eggContainer and #eggContainer:GetChildren() or 0
+                local maxAllowed = math.min(tonumber(Config.MaxPlotEggs) or 10, 10)
+
+                if curPlotEggs >= 10 or curPlotEggs >= maxAllowed then
+                    local equipped = char and char:FindFirstChildOfClass("Tool")
+                    if equipped and (equipped:HasTag("Egg") or EggsDB[equipped.Name]) then
+                        hum:UnequipTools()
+                    end
+                else
+                    local eligibleBackpackEggs = {}
+                    for _, tool in ipairs(LocalPlayer.Backpack:GetChildren()) do
+                        if tool:IsA("Tool") and (tool:HasTag("Egg") or EggsDB[tool.Name]) then
+                            local rarity = EggsDB[tool.Name] or "Common"
+                            if Config.PlaceRarities[rarity] then
+                                table.insert(eligibleBackpackEggs, {
+                                    tool = tool,
+                                    rarity = rarity,
+                                    weight = RarityWeights[rarity] or 0
+                                })
+                            end
+                        end
+                    end
+
+                    table.sort(eligibleBackpackEggs, function(a, b)
+                        return a.weight > b.weight
+                    end)
+
+                    local eggToPlace = eligibleBackpackEggs[1] and eligibleBackpackEggs[1].tool
+
+                    if not eggToPlace and char then
+                        local equipped = char:FindFirstChildOfClass("Tool")
+                        if equipped and (equipped:HasTag("Egg") or EggsDB[equipped.Name]) then
+                            local rarity = EggsDB[equipped.Name] or "Common"
+                            if Config.PlaceRarities[rarity] then
+                                eggToPlace = equipped
+                            end
+                        end
+                    end
+
+                    if eggToPlace then
+                        local root = char:FindFirstChild("HumanoidRootPart")
+                        local baseplate = plot:FindFirstChild("Baseplate")
+                        local plotCenter = baseplate and baseplate.Position or plot:GetPivot().Position
+                        if root and (root.Position - plotCenter).Magnitude > 60 then
+                            ReturnToPlot()
+                            task.wait(0.3)
+                        end
+
+                        if eggToPlace.Parent == LocalPlayer.Backpack then
+                            hum:EquipTool(eggToPlace)
+                            task.wait(0.25)
+                        end
+
+                        local availableNest = nil
+                        local nests = plot:FindFirstChild("Nests")
+                        if nests then
+                            for _, nest in ipairs(nests:GetChildren()) do
+                                if nest:GetAttribute("Unlocked") == true and nest:GetAttribute("Occupied") ~= true then
+                                    availableNest = nest
+                                    break
+                                end
+                            end
+                        end
+
+                        if availableNest then
+                            pcall(function()
+                                EggPlaced:FireServer({
+                                    NestId = availableNest.Name
+                                })
+                            end)
+                        else
+                            if baseplate then
+                                local offsetX = (math.random() - 0.5) * (baseplate.Size.X * 0.6)
+                                local offsetZ = (math.random() - 0.5) * (baseplate.Size.Z * 0.6)
+                                local plantPos = baseplate.Position + Vector3.new(offsetX, 1.2, offsetZ)
+
+                                pcall(function()
+                                    EggPlaced:FireServer({
+                                        PlantPosition = plantPos
+                                    })
+                                end)
+                            end
+                        end
+                        task.wait(0.6)
+                    end
+                end
+            end
+        end
+    end
+end)
+
+-- 5. Auto Rebirth Loop
+task.spawn(function()
+    local RebirthRemote = GameRemotes:FindFirstChild("Rebirth")
+    while task.wait(2.5) and IsSessionAlive() do
+        if Config.AutoRebirth and RebirthRemote then
+            pcall(function()
+                RebirthRemote:FireServer()
+            end)
+        end
+    end
+end)
+
+-- 5b. Auto Claim Index Rewards Loop
+task.spawn(function()
+    local ClaimIndexReward = GameRemotes:FindFirstChild("ClaimIndexReward")
+    local IndexRewards = nil
+    pcall(function()
+        IndexRewards = require(ReplicatedStorage.GameData.IndexRewards)
+    end)
+
+    while task.wait(2.0) and IsSessionAlive() do
+        if Config.AutoClaimIndex and ClaimIndexReward then
+            local savedData = LocalPlayer:FindFirstChild("SavedData")
+            local stageVal = savedData and savedData:FindFirstChild("IndexRewardStage") and savedData.IndexRewardStage.Value
+            local ownedPets = savedData and savedData:FindFirstChild("OwnedPets") and savedData.OwnedPets.Value
+
+            local canClaim = false
+            local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+            local claimBtn = playerGui and playerGui:FindFirstChild("Main") and playerGui.Main:FindFirstChild("Index")
+            local actualBtn = claimBtn and claimBtn:FindFirstChild("Claim", true)
+            if actualBtn and actualBtn.Visible then
+                canClaim = true
+            elseif IndexRewards and stageVal and ownedPets then
+                local stageData = IndexRewards.StageAt(stageVal)
+                if stageData and stageData.Goal then
+                    local discovered = IndexRewards.DiscoveredCount(ownedPets)
+                    if discovered >= stageData.Goal then
+                        canClaim = true
+                    end
+                end
+            end
+
+            if canClaim then
+                pcall(function()
+                    ClaimIndexReward:FireServer()
+                end)
+                if Fluent and Fluent.Notify then
+                    Fluent:Notify({
+                        Title = GetText("NotifyIndexReward_Title"),
+                        Content = GetText("NotifyIndexReward_Content", tostring((stageVal or 0) + 1)),
+                        Duration = 3.5
+                    })
+                end
+                task.wait(1.5)
+            end
+        end
+    end
+end)
+
+-- 6. Auto Hatch Luck Upgrades (10s Cooldown)
+task.spawn(function()
+    local PlotRemotes = GameRemotes:FindFirstChild("Plot")
+    local UpgradesRemote = PlotRemotes and PlotRemotes:FindFirstChild("Upgrades")
+
+    while task.wait(10.0) and IsSessionAlive() do
+        if Config.AutoHatchLuck and UpgradesRemote then
+            local savedData = LocalPlayer:FindFirstChild("SavedData")
+            local freeUpgrades = savedData and savedData:FindFirstChild("FreeHatchUpgrades")
+            local cash = savedData and savedData:FindFirstChild("Cash")
+
+            pcall(function()
+                if freeUpgrades and freeUpgrades.Value > 0 then
+                    UpgradesRemote:FireServer("MaxFree")
+                elseif cash and cash.Value > 0 then
+                    UpgradesRemote:FireServer("Max")
+                end
+            end)
+        end
+    end
+end)
+
+-- 6b. Auto Place Best Pets Loop
+task.spawn(function()
+    while task.wait(15.0) and IsSessionAlive() do
+        if Config.AutoPlaceBest then
+            local char = LocalPlayer.Character
+            local root = char and char:FindFirstChild("HumanoidRootPart")
+            local plot = GetPlayerPlot()
+            local isNearPlot = false
+            if plot and root then
+                local baseplate = plot:FindFirstChild("Baseplate")
+                local plotCenter = baseplate and baseplate.Position or plot:GetPivot().Position
+                if (root.Position - plotCenter).Magnitude < 80 then
+                    isNearPlot = true
+                end
+            end
+
+            if isNearPlot and not Config.TeleportCollectEggs then
+                TriggerPlaceBest()
+            end
+        end
+    end
+end)
+
+-- 7. Real-Time Volcano Monitor & Auto Dip Loop
+local ParaVolcanoStatus = nil
+task.spawn(function()
+    local volcanoPos = Vector3.new(-5102.84, 41405.63, -3489.11)
+    local lastDipTime = 0
+    while task.wait(2.5) and IsSessionAlive() do
+        if ParaVolcanoStatus then
+            pcall(function()
+                ParaVolcanoStatus:SetDesc(GetVolcanoStatusText())
+            end)
+        end
+
+        if Config.AutoVolcanoDip then
+            pcall(function()
+                local char = LocalPlayer.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if root and (root.Position - volcanoPos).Magnitude <= 400 then
+                    if os.clock() - lastDipTime >= 3.0 then
+                        lastDipTime = os.clock()
+                        local Net = require(ReplicatedStorage.packages.Net)
+                        Net:RemoteEvent("VolcanoDip"):FireServer()
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+-- 8. Player Speed / Jump modifications
+RunService.Heartbeat:Connect(function()
+    if Config.CustomSpeed and LocalPlayer.Character then
+        local hum = LocalPlayer.Character:FindFirstChildWhichIsA("Humanoid")
+        if hum then
+            hum.WalkSpeed = Config.WalkSpeed
+            hum.JumpPower = Config.JumpPower
+        end
+    end
+end)
+
+-- 9. Game Message Filter
+task.spawn(function()
+    local blockedPhrases = {"not enough cash", "you need a horse"}
+
+    local function IsBlocked(str)
+        if not str then return false end
+        local lower = str:lower()
+        for _, phrase in ipairs(blockedPhrases) do
+            if string.find(lower, phrase, 1, true) then
+                return true
+            end
+        end
+        return false
+    end
+
+    local function HandleMessage(child)
+        if not child:IsA("GuiObject") then return end
+        if IsBlocked(child.Name) then
+            child.Visible = false
+            child:Destroy()
+            return
+        end
+        task.defer(function()
+            if not child or not child.Parent then return end
+            if IsBlocked(child.Name) then
+                child.Visible = false
+                child:Destroy()
+                return
+            end
+            for _, desc in ipairs(child:GetDescendants()) do
+                if desc:IsA("TextLabel") and IsBlocked(desc.Text) then
+                    child.Visible = false
+                    child:Destroy()
+                    return
+                end
+            end
+        end)
+    end
+
+    local function HookGameMessages()
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if not playerGui then return end
+        local reusable = playerGui:FindFirstChild("Reusable")
+        local gm = reusable and reusable:FindFirstChild("GameMessages")
+        if gm then
+            for _, c in ipairs(gm:GetChildren()) do
+                HandleMessage(c)
+            end
+            gm.ChildAdded:Connect(HandleMessage)
+        end
+    end
+
+    HookGameMessages()
+    if LocalPlayer:FindFirstChild("PlayerGui") then
+        LocalPlayer.PlayerGui.ChildAdded:Connect(function(child)
+            if child.Name == "Reusable" then
+                task.wait(0.1)
+                HookGameMessages()
+            end
+        end)
+    end
+end)
+
+-- =========================================================================
+-- Fluent UI Construction
+-- =========================================================================
+local initWidth = math.clamp(tonumber(Config.UiWidth) or 560, 450, 1600)
+local initHeight = math.clamp(tonumber(Config.UiHeight) or 470, 340, 1200)
+
+local Window = Fluent:CreateWindow({
+    Title = "Ride A Pet [🌋]",
+    SubTitle = "by Street Hub",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(initWidth, initHeight),
+    Acrylic = false,
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.RightAlt
+})
+_G.RideAPetGUI = Fluent.GUI
+
+-- =========================================================================
+-- Universal UI Toggle & Resizing Systems (PC & Mobile)
+-- =========================================================================
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+
+local isHubUIVisible = true
+local ToggleButton, ToggleDot, ToggleStroke
+local ToggleFloatingBtn, ParaUiToggleInfo
+
+local function ApplyCustomWindowSize(w, h, saveConfig)
+    local camera = workspace.CurrentCamera
+    local vp = camera and camera.ViewportSize or Vector2.new(1920, 1080)
+    local targetW = math.clamp(math.floor(w), 450, math.max(450, vp.X - 20))
+    local targetH = math.clamp(math.floor(h), 340, math.max(340, vp.Y - 20))
+
+    if Window and Window.Root then
+        Window.Root.Size = UDim2.fromOffset(targetW, targetH)
+        Window.Size = Window.Root.Size
+    end
+    Config.UiWidth = targetW
+    Config.UiHeight = targetH
+
+    if saveConfig then
+        SaveAccountConfig()
+    end
+end
+
+-- Corner Resize Grip Handle on Window.Root (Direct Mouse Drag & Mobile Touch)
+local ResizeGrip = Instance.new("TextButton")
+ResizeGrip.Name = "StreetHubResizeGrip"
+ResizeGrip.Size = UDim2.fromOffset(26, 26)
+ResizeGrip.Position = UDim2.new(1, -2, 1, -2)
+ResizeGrip.AnchorPoint = Vector2.new(1, 1)
+ResizeGrip.BackgroundColor3 = Color3.fromRGB(24, 24, 32)
+ResizeGrip.BackgroundTransparency = 0.2
+ResizeGrip.Text = "◢"
+ResizeGrip.TextSize = 15
+ResizeGrip.TextColor3 = Color3.fromRGB(255, 110, 30)
+ResizeGrip.Font = Enum.Font.GothamBold
+ResizeGrip.ZIndex = 9999
+ResizeGrip.AutoButtonColor = false
+ResizeGrip.Parent = Window.Root
+
+local ResizeCorner = Instance.new("UICorner")
+ResizeCorner.CornerRadius = UDim.new(0, 6)
+ResizeCorner.Parent = ResizeGrip
+
+local ResizeStroke = Instance.new("UIStroke")
+ResizeStroke.Color = Color3.fromRGB(255, 110, 30)
+ResizeStroke.Thickness = 1.2
+ResizeStroke.Transparency = 0.2
+ResizeStroke.Parent = ResizeGrip
+
+ResizeGrip.MouseEnter:Connect(function()
+    pcall(function()
+        TweenService:Create(ResizeStroke, TweenInfo.new(0.15), {
+            Color = Color3.fromRGB(255, 180, 80),
+            Thickness = 2
+        }):Play()
+        TweenService:Create(ResizeGrip, TweenInfo.new(0.15), {
+            TextColor3 = Color3.fromRGB(255, 180, 80)
+        }):Play()
+    end)
+end)
+
+ResizeGrip.MouseLeave:Connect(function()
+    pcall(function()
+        TweenService:Create(ResizeStroke, TweenInfo.new(0.2), {
+            Color = Color3.fromRGB(255, 110, 30),
+            Thickness = 1.2
+        }):Play()
+        TweenService:Create(ResizeGrip, TweenInfo.new(0.2), {
+            TextColor3 = Color3.fromRGB(255, 110, 30)
+        }):Play()
+    end)
+end)
+
+local isResizingWindow = false
+local resizeStartInputPos = nil
+local resizeStartWindowSize = nil
+
+ResizeGrip.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isResizingWindow = true
+        resizeStartInputPos = input.Position
+        resizeStartWindowSize = Vector2.new(Window.Root.AbsoluteSize.X, Window.Root.AbsoluteSize.Y)
+        
+        pcall(function()
+            TweenService:Create(ResizeStroke, TweenInfo.new(0.12), {
+                Color = Color3.fromRGB(255, 200, 100),
+                Thickness = 2.2
+            }):Play()
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if isResizingWindow and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - resizeStartInputPos
+        local camera = workspace.CurrentCamera
+        local vp = camera and camera.ViewportSize or Vector2.new(1920, 1080)
+
+        local rootPos = Window.Root.AbsolutePosition
+        local maxAllowedW = math.max(450, vp.X - rootPos.X - 10)
+        local maxAllowedH = math.max(340, vp.Y - rootPos.Y - 10)
+
+        local newW = math.clamp(math.floor(resizeStartWindowSize.X + delta.X), 450, maxAllowedW)
+        local newH = math.clamp(math.floor(resizeStartWindowSize.Y + delta.Y), 340, maxAllowedH)
+
+        Window.Root.Size = UDim2.fromOffset(newW, newH)
+        Window.Size = Window.Root.Size
+
+        Config.UiWidth = newW
+        Config.UiHeight = newH
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if isResizingWindow then
+            isResizingWindow = false
+            pcall(function()
+                TweenService:Create(ResizeStroke, TweenInfo.new(0.2), {
+                    Color = Color3.fromRGB(255, 110, 30),
+                    Thickness = 1.2
+                }):Play()
+            end)
+            SaveAccountConfig()
+        end
+    end
+end)
+
+local function SetHubUIVisible(state)
+    isHubUIVisible = state
+    if Fluent and Fluent.GUI then
+        Fluent.GUI.Enabled = isHubUIVisible
+        if isHubUIVisible and Fluent.Window and Fluent.Window.Root then
+            local curW = math.clamp(tonumber(Config.UiWidth) or 560, 450, 1600)
+            local curH = math.clamp(tonumber(Config.UiHeight) or 470, 340, 1200)
+            Fluent.Window.Maximized = false
+            Fluent.Window.Root.Size = UDim2.fromOffset(curW, curH)
+            Fluent.Window.Size = Fluent.Window.Root.Size
+        end
+    end
+    if ToggleDot then
+        pcall(function()
+            ToggleDot.BackgroundColor3 = isHubUIVisible and Color3.fromRGB(46, 204, 113) or Color3.fromRGB(231, 76, 60)
+        end)
+    end
+end
+
+local function ToggleHubUI()
+    SetHubUIVisible(not isHubUIVisible)
+end
+
+-- PC Keyboard Hotkeys (LeftControl, RightControl, Insert)
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.LeftControl or input.KeyCode == Enum.KeyCode.RightControl or input.KeyCode == Enum.KeyCode.Insert then
+        ToggleHubUI()
+    end
+end)
+
+-- Mobile & PC Floating Draggable Button
+local toggleGuiParent = nil
+pcall(function() toggleGuiParent = gethui and gethui() end)
+if not toggleGuiParent then
+    pcall(function() toggleGuiParent = game:GetService("CoreGui") end)
+end
+if not toggleGuiParent then
+    toggleGuiParent = LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local StreetHubToggleGui = Instance.new("ScreenGui")
+StreetHubToggleGui.Name = "StreetHubToggleGui"
+StreetHubToggleGui.ResetOnSpawn = false
+StreetHubToggleGui.DisplayOrder = 999999
+StreetHubToggleGui.Parent = toggleGuiParent
+_G.StreetHubToggleGui = StreetHubToggleGui
+
+ToggleButton = Instance.new("TextButton")
+ToggleButton.Name = "StreetHubFloatingBtn"
+ToggleButton.Size = UDim2.fromOffset(130, 38)
+ToggleButton.Position = UDim2.new(0, 20, 0.25, 0)
+ToggleButton.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+ToggleButton.BackgroundTransparency = 0.15
+ToggleButton.Text = ""
+ToggleButton.AutoButtonColor = false
+ToggleButton.Visible = (Config.ShowFloatingButton ~= false)
+ToggleButton.Parent = StreetHubToggleGui
+
+local ToggleCorner = Instance.new("UICorner")
+ToggleCorner.CornerRadius = UDim.new(0, 19)
+ToggleCorner.Parent = ToggleButton
+
+ToggleStroke = Instance.new("UIStroke")
+ToggleStroke.Color = Color3.fromRGB(255, 95, 25)
+ToggleStroke.Thickness = 1.6
+ToggleStroke.Transparency = 0.1
+ToggleStroke.Parent = ToggleButton
+
+local ToggleIcon = Instance.new("TextLabel")
+ToggleIcon.Name = "Icon"
+ToggleIcon.Text = "🌋"
+ToggleIcon.TextSize = 16
+ToggleIcon.Size = UDim2.fromOffset(24, 24)
+ToggleIcon.Position = UDim2.new(0, 10, 0.5, 0)
+ToggleIcon.AnchorPoint = Vector2.new(0, 0.5)
+ToggleIcon.BackgroundTransparency = 1
+ToggleIcon.Parent = ToggleButton
+
+local ToggleTitle = Instance.new("TextLabel")
+ToggleTitle.Name = "Title"
+ToggleTitle.Text = "Street Hub"
+ToggleTitle.Font = Enum.Font.GothamBold
+ToggleTitle.TextSize = 13
+ToggleTitle.TextColor3 = Color3.fromRGB(245, 245, 255)
+ToggleTitle.Size = UDim2.fromOffset(70, 24)
+ToggleTitle.Position = UDim2.new(0, 36, 0.5, 0)
+ToggleTitle.AnchorPoint = Vector2.new(0, 0.5)
+ToggleTitle.BackgroundTransparency = 1
+ToggleTitle.TextXAlignment = Enum.TextXAlignment.Left
+ToggleTitle.Parent = ToggleButton
+
+ToggleDot = Instance.new("Frame")
+ToggleDot.Name = "Dot"
+ToggleDot.Size = UDim2.fromOffset(8, 8)
+ToggleDot.Position = UDim2.new(1, -16, 0.5, 0)
+ToggleDot.AnchorPoint = Vector2.new(0.5, 0.5)
+ToggleDot.BackgroundColor3 = Color3.fromRGB(46, 204, 113)
+ToggleDot.BorderSizePixel = 0
+ToggleDot.Parent = ToggleButton
+_G.StreetHubToggleDot = ToggleDot
+
+local DotCorner = Instance.new("UICorner")
+DotCorner.CornerRadius = UDim.new(1, 0)
+DotCorner.Parent = ToggleDot
+
+-- PC Hover Animation
+ToggleButton.MouseEnter:Connect(function()
+    pcall(function()
+        TweenService:Create(ToggleStroke, TweenInfo.new(0.2), {
+            Color = Color3.fromRGB(255, 140, 50),
+            Thickness = 2.2
+        }):Play()
+    end)
+end)
+
+ToggleButton.MouseLeave:Connect(function()
+    pcall(function()
+        TweenService:Create(ToggleStroke, TweenInfo.new(0.2), {
+            Color = Color3.fromRGB(255, 95, 25),
+            Thickness = 1.6
+        }):Play()
+    end)
+end)
+
+-- Dragging & Touch / Click Interaction (Seamless for PC & Mobile)
+local isDragging = false
+local dragStartPos = nil
+local buttonStartPos = nil
+local hasMoved = false
+
+ToggleButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        isDragging = true
+        hasMoved = false
+        dragStartPos = input.Position
+        buttonStartPos = ToggleButton.Position
+
+        pcall(function()
+            TweenService:Create(ToggleButton, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                Size = UDim2.fromOffset(122, 35)
+            }):Play()
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStartPos
+        if (input.Position - dragStartPos).Magnitude > 8 then
+            hasMoved = true
+        end
+
+        local camera = workspace.CurrentCamera
+        local vp = camera and camera.ViewportSize or Vector2.new(1920, 1080)
+
+        local newX = math.clamp(buttonStartPos.X.Offset + delta.X, 5, math.max(5, vp.X - 135))
+        local newY = math.clamp(buttonStartPos.Y.Offset + delta.Y, 5, math.max(5, vp.Y - 45))
+
+        ToggleButton.Position = UDim2.new(0, newX, 0, newY)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if isDragging then
+            isDragging = false
+
+            pcall(function()
+                TweenService:Create(ToggleButton, TweenInfo.new(0.15, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                    Size = UDim2.fromOffset(130, 38)
+                }):Play()
+            end)
+
+            if not hasMoved then
+                ToggleHubUI()
+            end
+        end
+    end
+end)
+
+local Tabs = {
+    EggFarm = Window:AddTab({ Title = GetText("TabEggFarm"), Icon = "egg" }),
+    Ranch = Window:AddTab({ Title = GetText("TabRanch"), Icon = "home" }),
+    Passive = Window:AddTab({ Title = GetText("TabPassive"), Icon = "coins" }),
+    Events = Window:AddTab({ Title = GetText("TabEvents"), Icon = "flame" }),
+    Player = Window:AddTab({ Title = GetText("TabPlayer"), Icon = "user" }),
+    Settings = Window:AddTab({ Title = GetText("TabSettings"), Icon = "settings" })
+}
+
+-- -------------------------------------------------------------------------
+-- 1. Egg Farm Tab (World Teleport & Egg Collection)
+-- -------------------------------------------------------------------------
+local ToggleTpEgg = Tabs.EggFarm:AddToggle("TeleportCollectEggs", {
+    Title = GetText("TeleportCollectEggs_Title"),
+    Description = GetText("TeleportCollectEggs_Desc"),
+    Default = Config.TeleportCollectEggs,
+    Callback = function(Value)
+        Config.TeleportCollectEggs = Value
+        SaveAccountConfig()
+        if Value and not isInitialLoading then
+            Fluent:Notify({
+                Title = GetText("NotifyAutoTpEgg_Title"),
+                Content = GetText("NotifyAutoTpEgg_Content"),
+                Duration = 3
+            })
+        end
+    end
+})
+
+local ToggleReturnHome = Tabs.EggFarm:AddToggle("ReturnHomeAfterCollect", {
+    Title = GetText("ReturnHomeAfterCollect_Title"),
+    Description = GetText("ReturnHomeAfterCollect_Desc"),
+    Default = Config.ReturnHomeAfterCollect,
+    Callback = function(Value)
+        Config.ReturnHomeAfterCollect = Value
+        SaveAccountConfig()
+    end
+})
+
+local SliderDelay = Tabs.EggFarm:AddSlider("CollectDelay", {
+    Title = GetText("CollectDelay_Title"),
+    Description = GetText("CollectDelay_Desc"),
+    Default = Config.CollectDelay,
+    Min = 0.15,
+    Max = 1.5,
+    Rounding = 2,
+    Callback = function(Value)
+        Config.CollectDelay = Value
+        SaveAccountConfig()
+    end
+})
+
+local DropdownFilter = Tabs.EggFarm:AddDropdown("EggRarities", {
+    Title = GetText("EggRarities_Title"),
+    Values = RarityList,
+    Multi = true,
+    Default = GetOnlyTrueKeys(Config.SelectedRarities),
+    Callback = function(Value)
+        for _, r in ipairs(RarityList) do
+            Config.SelectedRarities[r] = (Value[r] == true)
+        end
+        SaveAccountConfig()
+    end
+})
+
+-- -------------------------------------------------------------------------
+-- 2. Ranch & Hatch Tab (Plot Egg Placement & Smart Hatching)
+-- -------------------------------------------------------------------------
+local TogglePlace = Tabs.Ranch:AddToggle("AutoPlaceEggs", {
+    Title = GetText("AutoPlaceEggs_Title"),
+    Description = GetText("AutoPlaceEggs_Desc"),
+    Default = Config.AutoPlaceEggs,
+    Callback = function(Value)
+        Config.AutoPlaceEggs = Value
+        SaveAccountConfig()
+    end
+})
+
+local DropdownPlaceFilter = Tabs.Ranch:AddDropdown("PlaceEggRarities", {
+    Title = GetText("PlaceEggRarities_Title"),
+    Values = RarityList,
+    Multi = true,
+    Default = GetOnlyTrueKeys(Config.PlaceRarities),
+    Callback = function(Value)
+        for _, r in ipairs(RarityList) do
+            Config.PlaceRarities[r] = (Value[r] == true)
+        end
+        SaveAccountConfig()
+    end
+})
+
+local SliderMaxPlotEggs = Tabs.Ranch:AddSlider("MaxPlotEggs", {
+    Title = GetText("MaxPlotEggs_Title"),
+    Description = GetText("MaxPlotEggs_Desc"),
+    Default = Config.MaxPlotEggs,
+    Min = 1,
+    Max = 10,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.MaxPlotEggs = Value
+        SaveAccountConfig()
+    end
+})
+
+local ToggleHatch = Tabs.Ranch:AddToggle("AutoHatchReady", {
+    Title = GetText("AutoHatchReady_Title"),
+    Description = GetText("AutoHatchReady_Desc"),
+    Default = Config.AutoHatchReady,
+    Callback = function(Value)
+        Config.AutoHatchReady = Value
+        SaveAccountConfig()
+    end
+})
+
+local ToggleHatchLuck = Tabs.Ranch:AddToggle("AutoHatchLuck", {
+    Title = GetText("AutoHatchLuck_Title"),
+    Description = GetText("AutoHatchLuck_Desc"),
+    Default = Config.AutoHatchLuck,
+    Callback = function(Value)
+        Config.AutoHatchLuck = Value
+        SaveAccountConfig()
+    end
+})
+
+local TogglePlaceBest = Tabs.Ranch:AddToggle("AutoPlaceBest", {
+    Title = GetText("AutoPlaceBest_Title"),
+    Description = GetText("AutoPlaceBest_Desc"),
+    Default = Config.AutoPlaceBest,
+    Callback = function(Value)
+        Config.AutoPlaceBest = Value
+        SaveAccountConfig()
+        if Value and not isInitialLoading then
+            TriggerPlaceBest()
+            Fluent:Notify({
+                Title = GetText("NotifyPlaceBest_Title"),
+                Content = GetText("NotifyPlaceBest_Content"),
+                Duration = 3
+            })
+        end
+    end
+})
+
+local BtnTeleportPlot = Tabs.Ranch:AddButton({
+    Title = GetText("BtnTeleportPlot_Title"),
+    Description = GetText("BtnTeleportPlot_Desc"),
+    Callback = function()
+        ReturnToPlot()
+    end
+})
+
+-- -------------------------------------------------------------------------
+-- 3. Passive & Auto Tab (Cash, Rebirth, and Interaction)
+-- -------------------------------------------------------------------------
+local ToggleCollect = Tabs.Passive:AddToggle("AutoCollectCash", {
+    Title = GetText("AutoCollectCash_Title"),
+    Description = GetText("AutoCollectCash_Desc"),
+    Default = Config.AutoCollectCash,
+    Callback = function(Value)
+        Config.AutoCollectCash = Value
+        SaveAccountConfig()
+    end
+})
+
+local ToggleRebirth = Tabs.Passive:AddToggle("AutoRebirth", {
+    Title = GetText("AutoRebirth_Title"),
+    Description = GetText("AutoRebirth_Desc"),
+    Default = Config.AutoRebirth,
+    Callback = function(Value)
+        Config.AutoRebirth = Value
+        SaveAccountConfig()
+    end
+})
+
+local ToggleClaimIndex = Tabs.Passive:AddToggle("AutoClaimIndex", {
+    Title = GetText("AutoClaimIndex_Title"),
+    Description = GetText("AutoClaimIndex_Desc"),
+    Default = Config.AutoClaimIndex,
+    Callback = function(Value)
+        Config.AutoClaimIndex = Value
+        SaveAccountConfig()
+    end
+})
+
+-- -------------------------------------------------------------------------
+-- 4. Events Tab (Real-Time Weather, Sniper & Volcano Automation)
+-- -------------------------------------------------------------------------
+ParaVolcanoStatus = Tabs.Events:AddParagraph({
+    Title = GetText("VolcanoStatus_Title"),
+    Content = GetText("VolcanoStatus_Loading")
+})
+task.defer(function()
+    pcall(function()
+        if ParaVolcanoStatus then
+            ParaVolcanoStatus:SetDesc(GetVolcanoStatusText())
+        end
+    end)
+end)
+
+local BtnRefreshVolcano = Tabs.Events:AddButton({
+    Title = GetText("BtnRefreshVolcano_Title"),
+    Description = GetText("BtnRefreshVolcano_Desc"),
+    Callback = function()
+        if ParaVolcanoStatus then
+            ParaVolcanoStatus:SetDesc(GetVolcanoStatusText())
+        end
+    end
+})
+
+local BtnWarpVolcano = Tabs.Events:AddButton({
+    Title = GetText("BtnWarpVolcano_Title"),
+    Description = GetText("BtnWarpVolcano_Desc"),
+    Callback = function()
+        pcall(function()
+            local pos = Vector3.new(-5102.84, 41408, -3489.11)
+            pcall(function() LocalPlayer:RequestStreamAroundAsync(pos) end)
+            local char = LocalPlayer.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                char.HumanoidRootPart.CFrame = CFrame.new(pos + Vector3.new(0, 5, 0))
+            end
+        end)
+        Fluent:Notify({
+            Title = GetText("NotifyVolcanoWarp_Title"),
+            Content = GetText("NotifyVolcanoWarp_Content"),
+            Duration = 3
+        })
+    end
+})
+
+local BtnVolcanoDip = Tabs.Events:AddButton({
+    Title = GetText("BtnVolcanoDip_Title"),
+    Description = GetText("BtnVolcanoDip_Desc"),
+    Callback = function()
+        pcall(function()
+            local Net = require(ReplicatedStorage.packages.Net)
+            Net:RemoteEvent("VolcanoDip"):FireServer()
+        end)
+        Fluent:Notify({
+            Title = GetText("NotifyVolcanoDip_Title"),
+            Content = GetText("NotifyVolcanoDip_Content"),
+            Duration = 4
+        })
+    end
+})
+
+local ToggleAutoVolcanoDip = Tabs.Events:AddToggle("AutoVolcanoDip", {
+    Title = GetText("ToggleAutoVolcanoDip_Title"),
+    Description = GetText("ToggleAutoVolcanoDip_Desc"),
+    Default = Config.AutoVolcanoDip,
+    Callback = function(Value)
+        Config.AutoVolcanoDip = Value
+        SaveAccountConfig()
+    end
+})
+
+local ToggleSnipeVolcanicEgg = Tabs.Events:AddToggle("SnipeVolcanicEgg", {
+    Title = GetText("ToggleSnipeVolcanicEgg_Title"),
+    Description = GetText("ToggleSnipeVolcanicEgg_Desc"),
+    Default = Config.SnipeVolcanicEgg,
+    Callback = function(Value)
+        Config.SnipeVolcanicEgg = Value
+        SaveAccountConfig()
+    end
+})
+
+-- -------------------------------------------------------------------------
+-- 5. Player Tab (Character Movement & Speed)
+-- -------------------------------------------------------------------------
+local ToggleCustomSpeed = Tabs.Player:AddToggle("CustomSpeed", {
+    Title = GetText("CustomSpeed_Title"),
+    Description = GetText("CustomSpeed_Desc"),
+    Default = Config.CustomSpeed,
+    Callback = function(Value)
+        Config.CustomSpeed = Value
+        SaveAccountConfig()
+        if not Value and LocalPlayer.Character then
+            local hum = LocalPlayer.Character:FindFirstChildWhichIsA("Humanoid")
+            if hum then
+                hum.WalkSpeed = 16
+                hum.JumpPower = 50
+            end
+        end
+    end
+})
+
+local SliderWalkSpeed = Tabs.Player:AddSlider("WalkSpeed", {
+    Title = GetText("WalkSpeed_Title"),
+    Description = GetText("WalkSpeed_Desc"),
+    Default = Config.WalkSpeed,
+    Min = 16,
+    Max = 200,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.WalkSpeed = Value
+        SaveAccountConfig()
+    end
+})
+
+local SliderJumpPower = Tabs.Player:AddSlider("JumpPower", {
+    Title = GetText("JumpPower_Title"),
+    Description = GetText("JumpPower_Desc"),
+    Default = Config.JumpPower,
+    Min = 50,
+    Max = 300,
+    Rounding = 0,
+    Callback = function(Value)
+        Config.JumpPower = Value
+        SaveAccountConfig()
+    end
+})
+
+-- -------------------------------------------------------------------------
+-- 5. Settings Tab
+-- -------------------------------------------------------------------------
+local DropdownLanguage, ParaAccount, BtnManualSave, BtnResetDefaults
+
+local function SafeUpdateElement(elem, title, desc)
+    if not elem then return end
+    pcall(function()
+        if title and elem.SetTitle then elem:SetTitle(title) end
+        if desc and elem.SetDesc then elem:SetDesc(desc) end
+    end)
+end
+
+local function UpdateLanguage(lang)
+    Config.Language = (lang == "English" and "English") or "Thai"
+
+    local tabPairs = {
+        { Tabs.EggFarm, GetText("TabEggFarm") },
+        { Tabs.Ranch, GetText("TabRanch") },
+        { Tabs.Passive, GetText("TabPassive") },
+        { Tabs.Events, GetText("TabEvents") },
+        { Tabs.Player, GetText("TabPlayer") },
+        { Tabs.Settings, GetText("TabSettings") }
+    }
+    for _, item in ipairs(tabPairs) do
+        local tabObj, title = item[1], item[2]
+        if tabObj then
+            pcall(function()
+                tabObj.Name = title
+                if tabObj.Frame then
+                    local lbl = tabObj.Frame:FindFirstChildWhichIsA("TextLabel")
+                    if lbl then lbl.Text = title end
+                end
+                if tabObj.Selected and Window.TabDisplay then
+                    Window.TabDisplay.Text = title
+                end
+            end)
+        end
+    end
+
+    SafeUpdateElement(ToggleTpEgg, GetText("TeleportCollectEggs_Title"), GetText("TeleportCollectEggs_Desc"))
+    SafeUpdateElement(ToggleReturnHome, GetText("ReturnHomeAfterCollect_Title"), GetText("ReturnHomeAfterCollect_Desc"))
+    SafeUpdateElement(SliderDelay, GetText("CollectDelay_Title"), GetText("CollectDelay_Desc"))
+    SafeUpdateElement(DropdownFilter, GetText("EggRarities_Title"), GetText("EggRarities_Desc"))
+
+    SafeUpdateElement(TogglePlace, GetText("AutoPlaceEggs_Title"), GetText("AutoPlaceEggs_Desc"))
+    SafeUpdateElement(DropdownPlaceFilter, GetText("PlaceEggRarities_Title"), GetText("PlaceEggRarities_Desc"))
+    SafeUpdateElement(SliderMaxPlotEggs, GetText("MaxPlotEggs_Title"), GetText("MaxPlotEggs_Desc"))
+    SafeUpdateElement(ToggleHatch, GetText("AutoHatchReady_Title"), GetText("AutoHatchReady_Desc"))
+    SafeUpdateElement(ToggleHatchLuck, GetText("AutoHatchLuck_Title"), GetText("AutoHatchLuck_Desc"))
+    SafeUpdateElement(TogglePlaceBest, GetText("AutoPlaceBest_Title"), GetText("AutoPlaceBest_Desc"))
+    SafeUpdateElement(BtnTeleportPlot, GetText("BtnTeleportPlot_Title"), GetText("BtnTeleportPlot_Desc"))
+
+    SafeUpdateElement(ToggleCollect, GetText("AutoCollectCash_Title"), GetText("AutoCollectCash_Desc"))
+    SafeUpdateElement(ToggleRebirth, GetText("AutoRebirth_Title"), GetText("AutoRebirth_Desc"))
+    SafeUpdateElement(ToggleClaimIndex, GetText("AutoClaimIndex_Title"), GetText("AutoClaimIndex_Desc"))
+
+    if ParaVolcanoStatus then
+        pcall(function()
+            if ParaVolcanoStatus.SetTitle then ParaVolcanoStatus:SetTitle(GetText("VolcanoStatus_Title")) end
+            if ParaVolcanoStatus.SetDesc then ParaVolcanoStatus:SetDesc(GetVolcanoStatusText()) end
+        end)
+    end
+    SafeUpdateElement(BtnRefreshVolcano, GetText("BtnRefreshVolcano_Title"), GetText("BtnRefreshVolcano_Desc"))
+    SafeUpdateElement(BtnWarpVolcano, GetText("BtnWarpVolcano_Title"), GetText("BtnWarpVolcano_Desc"))
+    SafeUpdateElement(BtnVolcanoDip, GetText("BtnVolcanoDip_Title"), GetText("BtnVolcanoDip_Desc"))
+    SafeUpdateElement(ToggleAutoVolcanoDip, GetText("ToggleAutoVolcanoDip_Title"), GetText("ToggleAutoVolcanoDip_Desc"))
+    SafeUpdateElement(ToggleSnipeVolcanicEgg, GetText("ToggleSnipeVolcanicEgg_Title"), GetText("ToggleSnipeVolcanicEgg_Desc"))
+
+    SafeUpdateElement(ToggleCustomSpeed, GetText("CustomSpeed_Title"), GetText("CustomSpeed_Desc"))
+    SafeUpdateElement(SliderWalkSpeed, GetText("WalkSpeed_Title"), GetText("WalkSpeed_Desc"))
+    SafeUpdateElement(SliderJumpPower, GetText("JumpPower_Title"), GetText("JumpPower_Desc"))
+
+    SafeUpdateElement(DropdownLanguage, GetText("Language_Title"), GetText("Language_Desc"))
+    SafeUpdateElement(ToggleFloatingBtn, GetText("ToggleFloatingButton_Title"), GetText("ToggleFloatingButton_Desc"))
+    if ParaUiToggleInfo then
+        pcall(function()
+            if ParaUiToggleInfo.SetTitle then ParaUiToggleInfo:SetTitle(GetText("UiToggleInfo_Title")) end
+            if ParaUiToggleInfo.SetDesc then ParaUiToggleInfo:SetDesc(GetText("UiToggleInfo_Content")) end
+        end)
+    end
+    if ParaAccount then
+        pcall(function()
+            if ParaAccount.SetTitle then ParaAccount:SetTitle(GetText("AccountSave_Title")) end
+            if ParaAccount.SetDesc then
+                ParaAccount:SetDesc(GetText("AccountSave_Content", LocalPlayer.Name, tostring(LocalPlayer.UserId), LocalPlayer.Name, tostring(LocalPlayer.UserId)))
+            end
+        end)
+    end
+    SafeUpdateElement(BtnManualSave, GetText("BtnManualSave_Title"), GetText("BtnManualSave_Desc"))
+    SafeUpdateElement(BtnResetDefaults, GetText("BtnResetDefaults_Title"), GetText("BtnResetDefaults_Desc"))
+end
+
+DropdownLanguage = Tabs.Settings:AddDropdown("Language", {
+    Title = GetText("Language_Title"),
+    Description = GetText("Language_Desc"),
+    Values = {"ไทย", "English"},
+    Default = (Config.Language == "English" and "English") or "ไทย",
+    Callback = function(Value)
+        if isInitialLoading then return end
+        local chosen = (Value == "English") and "English" or "Thai"
+        if Config.Language ~= chosen then
+            Config.Language = chosen
+            SaveAccountConfig()
+            UpdateLanguage(chosen)
+            Fluent:Notify({
+                Title = (chosen == "English" and "Language") or "ภาษา",
+                Content = GetText("NotifyLangChanged"),
+                Duration = 3
+            })
+        end
+    end
+})
+
+ToggleFloatingBtn = Tabs.Settings:AddToggle("ShowFloatingButton", {
+    Title = GetText("ToggleFloatingButton_Title"),
+    Description = GetText("ToggleFloatingButton_Desc"),
+    Default = Config.ShowFloatingButton,
+    Callback = function(Value)
+        Config.ShowFloatingButton = Value
+        SaveAccountConfig()
+        if ToggleButton then
+            ToggleButton.Visible = Value
+        end
+    end
+})
+
+ParaUiToggleInfo = Tabs.Settings:AddParagraph({
+    Title = GetText("UiToggleInfo_Title"),
+    Content = GetText("UiToggleInfo_Content")
+})
+
+ParaAccount = Tabs.Settings:AddParagraph({
+    Title = GetText("AccountSave_Title"),
+    Content = GetText("AccountSave_Content", LocalPlayer.Name, tostring(LocalPlayer.UserId), LocalPlayer.Name, tostring(LocalPlayer.UserId))
+})
+
+BtnManualSave = Tabs.Settings:AddButton({
+    Title = GetText("BtnManualSave_Title"),
+    Description = GetText("BtnManualSave_Desc"),
+    Callback = function()
+        SaveAccountConfig(true)
+        Fluent:Notify({
+            Title = GetText("NotifyAutoSave_Title"),
+            Content = GetText("NotifySaved", LocalPlayer.Name),
+            Duration = 3
+        })
+    end
+})
+
+-- Save & Interface Managers
+SaveManager:SetLibrary(Fluent)
+InterfaceManager:SetLibrary(Fluent)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({})
+
+local accountKey = string.format("%s_%s", LocalPlayer.Name, tostring(LocalPlayer.UserId))
+InterfaceManager:SetFolder("RideAPetFluent/" .. accountKey)
+SaveManager:SetFolder("RideAPetFluent/" .. accountKey .. "/configs")
+
+pcall(function()
+    local staleAutoFile = string.format("RideAPetFluent/%s/configs/settings/autoload.txt", accountKey)
+    if isfile and isfile(staleAutoFile) then
+        delfile(staleAutoFile)
+    end
+end)
+
+local function ApplyConfigToUI()
+    isInitialLoading = true
+    pcall(function()
+        if Fluent.Options.Language then Fluent.Options.Language:SetValue(Config.Language == "English" and "English" or "ไทย") end
+        if Fluent.Options.TeleportCollectEggs then Fluent.Options.TeleportCollectEggs:SetValue(Config.TeleportCollectEggs) end
+        if Fluent.Options.ReturnHomeAfterCollect then Fluent.Options.ReturnHomeAfterCollect:SetValue(Config.ReturnHomeAfterCollect) end
+        if Fluent.Options.AutoCollectCash then Fluent.Options.AutoCollectCash:SetValue(Config.AutoCollectCash) end
+        if Fluent.Options.AutoHatchReady then Fluent.Options.AutoHatchReady:SetValue(Config.AutoHatchReady) end
+        if Fluent.Options.AutoHatchLuck then Fluent.Options.AutoHatchLuck:SetValue(Config.AutoHatchLuck) end
+        if Fluent.Options.AutoRebirth then Fluent.Options.AutoRebirth:SetValue(Config.AutoRebirth) end
+        if Fluent.Options.AutoClaimIndex then Fluent.Options.AutoClaimIndex:SetValue(Config.AutoClaimIndex) end
+        if Fluent.Options.EggRarities then Fluent.Options.EggRarities:SetValue(GetOnlyTrueKeys(Config.SelectedRarities)) end
+        if Fluent.Options.CollectDelay then Fluent.Options.CollectDelay:SetValue(Config.CollectDelay) end
+        if Fluent.Options.AutoPlaceEggs then Fluent.Options.AutoPlaceEggs:SetValue(Config.AutoPlaceEggs) end
+        if Fluent.Options.AutoPlaceBest then Fluent.Options.AutoPlaceBest:SetValue(Config.AutoPlaceBest) end
+        if Fluent.Options.PlaceEggRarities then Fluent.Options.PlaceEggRarities:SetValue(GetOnlyTrueKeys(Config.PlaceRarities)) end
+        if Fluent.Options.MaxPlotEggs then Fluent.Options.MaxPlotEggs:SetValue(Config.MaxPlotEggs) end
+        if Fluent.Options.AutoVolcanoDip then Fluent.Options.AutoVolcanoDip:SetValue(Config.AutoVolcanoDip) end
+        if Fluent.Options.SnipeVolcanicEgg then Fluent.Options.SnipeVolcanicEgg:SetValue(Config.SnipeVolcanicEgg) end
+        if Fluent.Options.CustomSpeed then Fluent.Options.CustomSpeed:SetValue(Config.CustomSpeed) end
+        if Fluent.Options.WalkSpeed then Fluent.Options.WalkSpeed:SetValue(Config.WalkSpeed) end
+        if Fluent.Options.JumpPower then Fluent.Options.JumpPower:SetValue(Config.JumpPower) end
+        if Fluent.Options.ShowFloatingButton then Fluent.Options.ShowFloatingButton:SetValue(Config.ShowFloatingButton) end
+    end)
+    UpdateLanguage(Config.Language)
+    isInitialLoading = false
+end
+
+BtnResetDefaults = Tabs.Settings:AddButton({
+    Title = GetText("BtnResetDefaults_Title"),
+    Description = GetText("BtnResetDefaults_Desc"),
+    Callback = function()
+        Config.Language = "Thai"
+        Config.AutoCollectCash = true
+        Config.TeleportCollectEggs = false
+        Config.ReturnHomeAfterCollect = true
+        Config.SelectedRarities = {
+            Common = false,
+            Rare = true,
+            Epic = true,
+            Legendary = true,
+            Mythic = true,
+            Divine = true,
+            Ethereal = true
+        }
+        Config.AutoHatchReady = true
+        Config.AutoPlaceEggs = true
+        Config.AutoPlaceBest = true
+        Config.PlaceRarities = {
+            Common = true,
+            Rare = true,
+            Epic = true,
+            Legendary = true,
+            Mythic = true,
+            Divine = true,
+            Ethereal = true
+        }
+        Config.MaxPlotEggs = 10
+        Config.AutoHatchLuck = true
+        Config.AutoRebirth = false
+        Config.AutoClaimIndex = true
+        Config.AutoVolcanoDip = false
+        Config.SnipeVolcanicEgg = true
+        Config.ShowFloatingButton = true
+        Config.UiWidth = 560
+        Config.UiHeight = 470
+        Config.CollectDelay = 0.35
+        Config.WalkSpeed = 32
+        Config.JumpPower = 75
+        Config.CustomSpeed = false
+
+        if ToggleButton then ToggleButton.Visible = true end
+        ApplyCustomWindowSize(560, 470, false)
+        ApplyConfigToUI()
+        SaveAccountConfig(true)
+        Fluent:Notify({
+            Title = GetText("NotifyAutoSave_Title"),
+            Content = GetText("NotifyReset"),
+            Duration = 3
+        })
+    end
+})
+
+InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+SaveManager:BuildConfigSection(Tabs.Settings)
+
+ApplyConfigToUI()
+
+pcall(function() Window:SelectTab(1) end)
+Fluent:Notify({
+    Title = "Ride A Pet Hub",
+    Content = GetText("NotifyLoaded", LocalPlayer.Name),
+    Duration = 5
+})
