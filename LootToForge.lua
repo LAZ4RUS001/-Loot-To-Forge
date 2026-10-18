@@ -118,6 +118,8 @@ local State = {
     AutoEquipBest = false,
     AutoSellAll = false,
     AutoDungeonSweep = false,
+    AutoFarmSeason2Coins = false, -- High-speed Dungeon Floor 50 Season 2 Coin farm
+    AutoPetLuck = false, -- Auto roll Season 2 Pet Luck (400 SS2 Coins per roll)
     AutoKillSuperLoot = false,
     AutoWorldBoss = false,
     WorldBossCountdown = "Calculating...",
@@ -425,24 +427,30 @@ local function ApplyGamePassAndVIPBypass()
         end
 
         -- 2. Inject into ProfileData Pem store
-        local ProfileData = require(ReplicatedStorage:WaitForChild("ProfileData"))
-        local pemStore = ProfileData.GetStoreData("Pem")
-        if type(pemStore) == "table" then
-            for _, pass in ipairs(BYPASS_GAMEPASS_LIST) do
-                pemStore[pass] = true
+        local pdInst = ReplicatedStorage:FindFirstChild("ProfileData")
+        if pdInst then
+            local ProfileData = require(pdInst)
+            local pemStore = ProfileData.GetStoreData and ProfileData.GetStoreData("Pem")
+            if type(pemStore) == "table" then
+                for _, pass in ipairs(BYPASS_GAMEPASS_LIST) do
+                    pemStore[pass] = true
+                end
             end
         end
 
         -- 3. Inject into ProfileData Season store & hook SeasonData
-        local SeasonData = require(ReplicatedStorage.LocalData.SeasonData)
-        local seasonStore = ProfileData.GetStoreData("Season")
-        if seasonStore and seasonStore.Season1 then
-            seasonStore.Season1.IsVIP = true
-            seasonStore.Season1.Cardx2 = true
+        if pdInst and ReplicatedStorage:FindFirstChild("LocalData") and ReplicatedStorage.LocalData:FindFirstChild("SeasonData") then
+            local ProfileData = require(pdInst)
+            local SeasonData = require(ReplicatedStorage.LocalData.SeasonData)
+            local seasonStore = ProfileData.GetStoreData and ProfileData.GetStoreData("Season")
+            if seasonStore and seasonStore.Season1 then
+                seasonStore.Season1.IsVIP = true
+                seasonStore.Season1.Cardx2 = true
+            end
+            SeasonData.IsVIP = function() return true end
+            SeasonData.IsCardx2 = function() return true end
+            SeasonData.IsRewardLock = function() return false end
         end
-        SeasonData.IsVIP = function() return true end
-        SeasonData.IsCardx2 = function() return true end
-        SeasonData.IsRewardLock = function() return false end
 
         -- 4. Set player attributes for VIP & AutoCollect
         LocalPlayer:SetAttribute("IsVIP", true)
@@ -450,37 +458,43 @@ local function ApplyGamePassAndVIPBypass()
         LocalPlayer:SetAttribute("AutoCollect", "Common")
 
         -- 5. Trigger game's built-in AutoCollectOre logic
-        pcall(function()
-            local StageManager = LocalPlayer:FindFirstChild("PlayerScripts") and LocalPlayer.PlayerScripts:FindFirstChild("Manager") and LocalPlayer.PlayerScripts.Manager:FindFirstChild("StageManager")
-            if StageManager and StageManager:FindFirstChild("OreUtils") then
-                local OreUtils = require(StageManager.OreUtils)
-                if OreUtils and OreUtils.OpenAutoCollect then
-                    OreUtils.OpenAutoCollect("Common")
+        task.spawn(function()
+            pcall(function()
+                local StageManager = LocalPlayer:FindFirstChild("PlayerScripts") and LocalPlayer.PlayerScripts:FindFirstChild("Manager") and LocalPlayer.PlayerScripts.Manager:FindFirstChild("StageManager")
+                if StageManager and StageManager:FindFirstChild("OreUtils") then
+                    local OreUtils = require(StageManager.OreUtils)
+                    if OreUtils and OreUtils.OpenAutoCollect then
+                        OreUtils.OpenAutoCollect("Common")
+                    end
                 end
-            end
-        end)
-        pcall(function()
-            if StageRemote and StageRemote:FindFirstChild("OpenAutoCollectRE") then
-                StageRemote.OpenAutoCollectRE:FireServer("Common")
-            end
+            end)
+            pcall(function()
+                if StageRemote and StageRemote:FindFirstChild("OpenAutoCollectRE") then
+                    StageRemote.OpenAutoCollectRE:FireServer("Common")
+                end
+            end)
         end)
 
-        -- 6. Trigger all registered PemData UI callbacks so all in-game GUIs update immediately
+        -- 6. Trigger all registered PemData UI callbacks in separate ephemeral threads to prevent yields
         local getuv = debug and debug.getupvalue or getupvalue
         if getuv then
             local callbacks = getuv(PemData.AddCallback, 1)
             if type(callbacks) == "table" then
                 for _, cb in ipairs(callbacks) do
-                    pcall(cb)
+                    task.spawn(function()
+                        pcall(cb)
+                    end)
                 end
             end
         end
 
         -- 7. Update Shop GUI if loaded
         pcall(function()
-            local ShopModule = require(ReplicatedStorage.GuiUtils.Shop)
-            if ShopModule and ShopModule.updateGamePass then
-                ShopModule.updateGamePass()
+            if ReplicatedStorage:FindFirstChild("GuiUtils") and ReplicatedStorage.GuiUtils:FindFirstChild("Shop") then
+                local ShopModule = require(ReplicatedStorage.GuiUtils.Shop)
+                if ShopModule and ShopModule.updateGamePass then
+                    ShopModule.updateGamePass()
+                end
             end
         end)
 
@@ -1248,6 +1262,30 @@ local isMobile = UserInputService.TouchEnabled and not (UserInputService.Keyboar
 local vp = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize) or Vector2.new(800, 600)
 local winWidth = State.WindowWidth or (isMobile and math.clamp(math.floor(vp.X * 0.90), 320, 500) or 560)
 local winHeight = State.WindowHeight or (isMobile and math.clamp(math.floor(vp.Y * 0.85), 260, 360) or 420)
+if _G.StreetHubFluentWindow and _G.StreetHubFluentWindow.Root then
+    pcall(function()
+        local sg = _G.StreetHubFluentWindow.Root:FindFirstAncestorWhichIsA("ScreenGui")
+        if sg then sg:Destroy() end
+    end)
+end
+
+-- Cleanup any test windows
+pcall(function()
+    local cg = game:GetService("CoreGui")
+    for _, g in ipairs({cg, cg:FindFirstChild("RobloxGui"), LocalPlayer:FindFirstChild("PlayerGui")}) do
+        if g then
+            for _, c in ipairs(g:GetChildren()) do
+                if c:IsA("ScreenGui") and c.Name == "ScreenGui" then
+                    local t = c:FindFirstChild("Title", true)
+                    if t and (t.Text == "Test" or t.Text == "Tab") then
+                        c:Destroy()
+                    end
+                end
+            end
+        end
+    end
+end)
+
 local tabWidth = isMobile and 120 or 145
 
 local Window = Fluent:CreateWindow({
@@ -1496,29 +1534,37 @@ local function CreateFloatingToggleButton()
     end)
 end
 
--- Permanently suppress Roblox CoreGui PurchasePromptApp to prevent 649 Robux popups
+-- Permanently suppress Roblox CoreGui PurchasePromptApp, FoundationOverlay, and Upsell modals
 local function SetupPurchasePromptBlocker()
     pcall(function()
         local cg = game:GetService("CoreGui")
-        local ppa = cg:FindFirstChild("PurchasePromptApp")
-        if ppa then
-            if State and State.Force100xTrain then ppa.Enabled = false end
-            ppa:GetPropertyChangedSignal("Enabled"):Connect(function()
-                if State and State.Force100xTrain and ppa.Enabled then
-                    ppa.Enabled = false
-                end
-            end)
-        end
-        cg.ChildAdded:Connect(function(child)
-            if child.Name == "PurchasePromptApp" then
-                if State and State.Force100xTrain then child.Enabled = false end
-                child:GetPropertyChangedSignal("Enabled"):Connect(function()
-                    if State and State.Force100xTrain and child.Enabled then
-                        child.Enabled = false
-                    end
+        local blockedNames = {
+            PurchasePromptApp = true,
+            FoundationOverlay = true,
+            AvatarEditorPromptsApp = true,
+            CommercePurchaseApp = true,
+            BulkPurchaseApp = true
+        }
+
+        local function suppress(obj)
+            if not obj then return end
+            if blockedNames[obj.Name] then
+                pcall(function()
+                    if obj:IsA("ScreenGui") then obj.Enabled = false end
+                    for _, d in ipairs(obj:GetChildren()) do pcall(function() d:Destroy() end) end
                 end)
+                if obj:IsA("ScreenGui") then
+                    obj:GetPropertyChangedSignal("Enabled"):Connect(function()
+                        if obj.Enabled then obj.Enabled = false end
+                    end)
+                end
             end
-        end)
+        end
+
+        for _, child in ipairs(cg:GetChildren()) do
+            suppress(child)
+        end
+        cg.ChildAdded:Connect(suppress)
     end)
 end
 SetupPurchasePromptBlocker()
@@ -1526,13 +1572,56 @@ SetupPurchasePromptBlocker()
 CreateFloatingToggleButton()
 
 local Tabs = {
-    Bypass = Window:AddTab({ Title = "Bypass 🔥", Icon = "zap" }),
+    Bypass = Window:AddTab({ Title = "🔥 Bypass", Icon = "zap" }),
     Farm = Window:AddTab({ Title = "Farm", Icon = "sprout" }),
     Forge = Window:AddTab({ Title = "Forge", Icon = "hammer" }),
     Combat = Window:AddTab({ Title = "Combat", Icon = "swords" }),
     Rewards = Window:AddTab({ Title = "Claim", Icon = "gift" }),
     Settings = Window:AddTab({ Title = "Settings", Icon = "settings" })
 }
+
+local function CreateSection(tab, title)
+    local container = tab.ScrollFrame or tab.Container
+    local sec = {}
+    local frame = Instance.new("Frame")
+    frame.Name = "SectionHeader"
+    frame.Size = UDim2.new(1, 0, 0, 28)
+    frame.BackgroundTransparency = 1
+    frame.LayoutOrder = 7
+    frame.Parent = container
+
+    local titleLbl = Instance.new("TextLabel")
+    titleLbl.Name = "Title"
+    titleLbl.Size = UDim2.new(1, -8, 0, 16)
+    titleLbl.Position = UDim2.new(0, 4, 0, 4)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Font = Enum.Font.GothamBold
+    titleLbl.Text = string.upper(title)
+    titleLbl.TextColor3 = Color3.fromRGB(0, 215, 125)
+    titleLbl.TextSize = 11
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    titleLbl.Parent = frame
+
+    local sep = Instance.new("Frame")
+    sep.Name = "Separator"
+    sep.Size = UDim2.new(1, -8, 0, 1)
+    sep.Position = UDim2.new(0, 4, 1, -1)
+    sep.BackgroundColor3 = Color3.fromRGB(36, 40, 48)
+    sep.BorderSizePixel = 0
+    sep.Parent = frame
+
+    function sec:SetTitle(newTitle)
+        titleLbl.Text = string.upper(newTitle)
+    end
+
+    return sec
+end
+
+for _, tab in pairs(Tabs) do
+    tab.AddSection = function(self, title)
+        return CreateSection(self, title)
+    end
+end
 
 local Options = Fluent.Options
 local UIElements = {}
@@ -1542,134 +1631,182 @@ local UIElements = {}
 -- ========================================================================
 local I18N = {
     EN = {
-        TabBypass = "Bypass 🔥",
+        TabBypass = "🔥 Bypass",
         TabFarm = "Farm",
         TabForge = "Forge",
         TabCombat = "Combat",
         TabRewards = "Claim",
         TabSettings = "Settings",
 
-        BypassInfoTitle = "🔥 Brutal Master Bypass Engine",
+        -- Section Headers
+        SecBypassCore = "Core Bypasses",
+        SecBypassMovement = "Movement & Visuals",
+        SecBypassActions = "Instant Actions",
+
+        SecFarmStats = "Live Dashboard",
+        SecFarmTrain = "Training & Rebirth",
+        SecFarmSeason = "Season 2 & Pets",
+        SecFarmOres = "Ores & Inventory",
+        SecFarmRaid = "Stage 27 Raid",
+
+        SecForgeCraft = "Auto Crafting",
+        SecForgeGear = "Gear Management",
+        SecForgeAstral = "Astral Genesis VIP Set",
+
+        SecCombatTower = "Frozen Tower (Floor 1-50)",
+        SecCombatBoss = "World Boss",
+        SecCombatSkills = "Skills & Combat",
+
+        SecRewardsAuto = "Automated Claims",
+        SecRewardsInstant = "Instant Claims",
+
+        SecSettingsProfile = "Profile & Language",
+        SecSettingsSave = "Auto Save & Protection",
+        SecSettingsWindow = "Window Display",
+        SecSettingsConfig = "Configurations",
+
+        -- Bypass Tab
+        BypassInfoTitle = "Master Bypass Engine",
         BypassInfoContent = "Unlocks all VIP GamePasses, Instant 1e30 Kill Aura, Immortal God Mode, and Extreme Stat Multipliers.",
-        UnlockGamePassesTitle = "👑 Unlock All GamePasses & VIP",
+        UnlockGamePassesTitle = "Unlock All GamePasses & VIP",
         UnlockGamePassesDesc = "Grants VIP, SuperLuck, UltraLuck, CommonLuck, MoreOre, SkipForge, AutoCollectOre, 2xDamage, SeasonVIP, and VIP Train Areas 9-11 without Robux",
-        OmniKillAuraTitle = "⚔️ Omni-Kill Aura (Map-Wide 1-Hit Kill 1e30)",
-        OmniKillAuraDesc = "Instantly annihilates all enemies across the entire map using 1e30 damage and server execution events",
-        GodModeTitle = "🛡️ God Mode / Immortal Invincibility",
+        OmniKillAuraTitle = "Omni-Kill Aura (1e30 Damage)",
+        OmniKillAuraDesc = "Instantly eliminates all enemies across the entire map using 1e30 damage and server execution events",
+        GodModeTitle = "God Mode (Immortal)",
         GodModeDesc = "Completely zeroes out all incoming damage; keeps health at 100% permanently",
-        InsaneStatsTitle = "⚡ Extreme Stat Multiplier (+5000% Boost)",
+        InsaneStatsTitle = "Extreme Stat Multiplier (+5000%)",
         InsaneStatsDesc = "Hooks game balance formulas for massive Luck, Damage, Coins, and Ore drop rates",
-        SpeedHackTitle = "🏃 Enable WalkSpeed Boost",
+        SpeedHackTitle = "WalkSpeed Boost",
         SpeedHackDesc = "Overrides player movement speed (16 - 150)",
-        WalkSpeedSliderTitle = "🏃 Custom WalkSpeed",
-        JumpHackTitle = "🦘 Enable JumpPower Boost",
+        WalkSpeedSliderTitle = "Custom WalkSpeed",
+        JumpHackTitle = "JumpPower Boost",
         JumpHackDesc = "Overrides player jump height (50 - 200)",
-        JumpPowerSliderTitle = "🦘 Custom JumpPower",
-        NoclipTitle = "👻 Noclip (Pass Through All Objects)",
+        JumpPowerSliderTitle = "Custom JumpPower",
+        NoclipTitle = "Noclip (Walk Through Walls)",
         NoclipDesc = "Disables collision on character parts, allowing you to walk through walls and gates",
-        InfiniteJumpTitle = "🪶 Infinite Jump",
+        InfiniteJumpTitle = "Infinite Jump",
         InfiniteJumpDesc = "Allows jumping repeatedly in mid-air without landing",
-        DisableBlurTitle = "👁️ Disable Screen Blur & DOF",
+        DisableBlurTitle = "Disable Blur & Depth of Field",
         DisableBlurDesc = "Permanently removes TrainDOF, Blur, and Depth of Field for a crystal clear view",
-        BtnNukeAllTitle = "💥 Nuke All Current Map Enemies Now",
+        BtnNukeAllTitle = "Nuke All Map Enemies Now",
         BtnNukeAllDesc = "Sends 1e30 damage to every monster currently present in workspace",
-        BtnVacuumOresTitle = "🧲 Instant Vacuum All World Ores",
+        BtnVacuumOresTitle = "Vacuum All World Ores",
         BtnVacuumOresDesc = "Instantly collects all dropped ores across the entire game",
 
-        StatTitle = "📊 Live Player Statistics",
-        AutoTrainTitle = "⚡ Hyper Fast Auto Train",
+        -- Farm Tab
+        StatTitle = "Live Player Statistics",
+        AutoTrainTitle = "Auto Train (Highest Area)",
         AutoTrainDesc = "Auto-warps directly to your highest unlocked train pad & trains at max multiplier",
-        Force100xTrainTitle = "👑 Force x100 Train (Free GamePass Bypass)",
+        Force100xTrainTitle = "Force 100x Train Pad (VIP)",
         Force100xTrainDesc = "Forces VIP 100x multiplier train pad without purchasing the GamePass",
-        AutoRebirthTitle = "🔄 Auto Rebirth (Max Speed)",
+        AutoRebirthTitle = "Auto Rebirth (Max Speed)",
         AutoRebirthDesc = "Instantly performs Rebirth the moment level requirement is met",
-        AutoStage27Title = "🚀 Auto Stage 27 Raid & Return Loop",
-        AutoStage27Desc = "Warps to Stage 27, kills all mobs, collects drops, clicks Back, and waits 5s cooldown",
-        BtnStage27Title = "⚡ Warp Stage 27 -> Kill -> Loot -> Return",
-        BtnStage27Desc = "Run one full Stage 27 sweep cycle now",
-        AutoCollectOresTitle = "🧲 Auto Collect Ores (Instant Magnet & Prompt)",
-        AutoCollectOresDesc = "Automatically triggers proximity prompts and vacuums every ore across the map",
-        AutoSmartPackTitle = "📦 Auto Free Pack (Craft 10 Ores When Full)",
-        AutoSmartPackDesc = "Automatically crafts equipment using 10 ores whenever the 24-slot pack fills up",
-        BtnCollectOresTitle = "🧲 Instant Collect All Ground Ores",
-        BtnCollectOresDesc = "Collects all dropped ores currently on the map",
-        BtnWarpTrainTitle = "📍 Teleport To Best Unlocked Train Area",
+        BtnWarpTrainTitle = "Warp to Best Train Area",
         BtnWarpTrainDesc = "Instantly warps to your highest multiplier training dummy pad",
-        BtnMaxUpgradesTitle = "⭐ Max Upgrade Passives (Train / Luck / OrePack)",
+        BtnMaxUpgradesTitle = "Max Upgrade Passives",
         BtnMaxUpgradesDesc = "Upgrades Train, Luck, and OrePack capacity to max level",
 
-        AutoForgeTitle = "🔥 Auto Forge (Batches of 10 Ores)",
+        AutoFarmSS2Title = "Auto Farm SS2 Coins (Tower 50)",
+        AutoFarmSS2Desc = "Spams Dungeon Floor 50 completions to rapidly farm massive Season 2 Coins, Ores & Enchant Stones",
+        BtnFarmSS2Title = "Instant Farm 100x SS2 Coins",
+        BtnFarmSS2Desc = "Runs a 100-round burst of Dungeon Floor 50 immediately",
+        NotifySS2Farmed = "Farmed %d rounds (+%s SS2 Coins)!",
+        AutoPetLuckTitle = "Auto Roll Pet Luck",
+        AutoPetLuckDesc = "Automatically rolls Season 2 Pet Luck when having >= 400 SS2 Coins (bypasses roll animations)",
+        BtnRollPetLuckTitle = "Instant Roll Pet Luck (10x)",
+        BtnRollPetLuckDesc = "Draws 10 Season 2 Pets instantly using 4,000 SS2 Coins",
+        NotifyPetLuckRoll = "Drew Pet Luck: %s [%s]!",
+        NotifyPetLuckBurst = "Rolled %d Season 2 pet(s)!",
+        NotifyNotEnoughCoins = "Not enough SS2 Coins! Need at least 400 coins per roll.",
+
+        AutoCollectOresTitle = "Auto Collect Ores",
+        AutoCollectOresDesc = "Automatically triggers proximity prompts and vacuums every ore across the map",
+        AutoSmartPackTitle = "Auto Forge 10 Ores When Full",
+        AutoSmartPackDesc = "Automatically crafts equipment using 10 ores whenever the 24-slot pack fills up",
+        BtnCollectOresTitle = "Collect All Ground Ores",
+        BtnCollectOresDesc = "Collects all dropped ores currently on the map",
+
+        AutoStage27Title = "Auto Stage 27 Raid Loop",
+        AutoStage27Desc = "Warps to Stage 27, kills all mobs, collects drops, clicks Back, and waits 5s cooldown",
+        BtnStage27Title = "Run Stage 27 Sweep Once",
+        BtnStage27Desc = "Run one full Stage 27 sweep cycle now",
+
+        -- Forge Tab
+        AutoForgeTitle = "Auto Forge (10 Ores)",
         AutoForgeDesc = "Continuously crafts items using 10 ores per batch",
         ForgeTypeTitle = "Craft Target Type",
-        AutoEquipBestTitle = "🛡️ Auto Equip Best Gear (Weapon / Armor / Hat)",
-        AutoEquipBestDesc = "Automatically scans inventory and equips the highest stat equipment",
-        BtnInstantEquipTitle = "⚡ Instant Equip Best Gear",
-        BtnInstantEquipDesc = "Equips the strongest weapon, armor, and hat currently in your inventory",
-        BtnEquipAstralTitle = "🌌 Spawn Astral Genesis Set (VIP Bypass)",
-        BtnEquipAstralDesc = "Attaches Astral Supernova Edge, Devourer Plate, and Sovereign Crown",
-        ToggleAstralSetTitle = "👑 Permanent Astral Genesis Set",
-        ToggleAstralSetDesc = "Keeps Astral Genesis gear models and effects equipped on character",
-        AutoSellAllTitle = "💰 Auto Sell Non-Equipped Items",
-        AutoSellAllDesc = "Periodically sells extra crafted items for coins",
-        BtnMultiForgeTitle = "🔨 Instant Multi-Forge 5x",
+        BtnMultiForgeTitle = "Instant Forge 5 Batches",
         BtnMultiForgeDesc = "Crafts 5 batches of equipment immediately",
-        BtnSellAllTitle = "🗑️ Instant Sell All Non-Equipped Items",
+        AutoEquipBestTitle = "Auto Equip Best Gear",
+        AutoEquipBestDesc = "Automatically scans inventory and equips the highest stat equipment",
+        BtnInstantEquipTitle = "Instant Equip Best Gear",
+        BtnInstantEquipDesc = "Equips the strongest weapon, armor, and hat currently in your inventory",
+        AutoSellAllTitle = "Auto Sell Non-Equipped Items",
+        AutoSellAllDesc = "Periodically sells extra crafted items for coins",
+        BtnSellAllTitle = "Instant Sell All Non-Equipped",
         BtnSellAllDesc = "Sells all unequipped gear in backpack for coins",
+        ToggleAstralSetTitle = "Permanent Astral Genesis Set",
+        ToggleAstralSetDesc = "Keeps Astral Genesis gear models and effects equipped on character",
+        BtnEquipAstralTitle = "Spawn Astral Genesis Set Now",
+        BtnEquipAstralDesc = "Attaches Astral Supernova Edge, Devourer Plate, and Sovereign Crown",
 
-        AutoDungeonTitle = "🏰 Auto Tower 1-50 Instant Nuke",
+        -- Combat Tab
+        AutoDungeonTitle = "Auto Clear Tower Floors 1-50",
         AutoDungeonDesc = "Enters Frozen Tower and instantly completes all 50 floors in one pass without climbing floor by floor",
-        BtnInstantTowerTitle = "⚡ Instant Nuke Tower Floors 1-50 (1-Click)",
+        BtnInstantTowerTitle = "Instant Clear Tower 1-50 (1-Click)",
         BtnInstantTowerDesc = "Instantly clears all 50 floors in seconds, wipes mobs with 1e30, and vacuums all rewards",
-        BtnEnterFloor50Title = "🚪 Warp & Enter Floor 50 Directly",
+        BtnEnterFloor50Title = "Enter Tower Floor 50 Directly",
         BtnEnterFloor50Desc = "Enters top floor 50 of Frozen Tower directly",
-        BtnEnterDungeonTitle = "🚪 Enter Tower Floor 1",
-        BtnExitDungeonTitle = "🏃 Exit Tower / Dungeon",
-        AutoSuperLootTitle = "🎯 Auto Kill Mobs & SuperLoot",
-        AutoSuperLootDesc = "Insta-kills any monsters and SuperLoot entities that spawn in the map",
-        AutoSkillsTitle = "💥 Auto Spam Weapon Skills",
-        AutoSkillsDesc = "Fires weapon skills constantly",
-        BtnCastAstralTitle = "🌌 Cast Astral Burst Domain (1100% AoE)",
-        BtnCastAstralDesc = "Unleashes the cosmic dragon domain dealing continuous 1100% damage",
-        ToggleAstralSkillTitle = "🌌 Auto Cast Astral Burst Domain",
-        ToggleAstralSkillDesc = "Continuously activates Astral Burst Domain during combat",
+        BtnEnterDungeonTitle = "Enter Tower Floor 1",
+        BtnExitDungeonTitle = "Exit Tower / Dungeon",
 
-        WorldBossStatusTitle = "👹 World Boss Status",
-        AutoWorldBossTitle = "👹 Auto World Boss (One-Shot 1e30 & Auto Claim)",
+        WorldBossStatusTitle = "World Boss Status",
+        AutoWorldBossTitle = "Auto World Boss (One-Shot & Claim)",
         AutoWorldBossDesc = "Automatically joins arena when World Boss spawns, one-shots with 1e30 damage, claims card reward, and returns",
-        BtnJoinWorldBossTitle = "🚪 Force Join World Boss Arena",
+        BtnJoinWorldBossTitle = "Join World Boss Arena",
         BtnJoinWorldBossDesc = "Teleports to World Boss arena and registers fight now",
-        BtnExitWorldBossTitle = "🏃 Force Exit World Boss Arena",
+        BtnExitWorldBossTitle = "Exit World Boss Arena",
         BtnExitWorldBossDesc = "Leaves World Boss arena and teleports back to spawn",
 
-        AutoClaimAllTitle = "🎁 Auto Claim Daily / Online / Index / Log Rewards",
+        AutoSkillsTitle = "Auto Spam Weapon Skills",
+        AutoSkillsDesc = "Fires weapon skills constantly",
+        ToggleAstralSkillTitle = "Auto Cast Astral Burst Domain",
+        ToggleAstralSkillDesc = "Continuously activates Astral Burst Domain during combat",
+        BtnCastAstralTitle = "Cast Astral Burst Domain Now",
+        BtnCastAstralDesc = "Unleashes the cosmic dragon domain dealing continuous 1100% damage",
+        AutoSuperLootTitle = "Auto Kill Mobs & SuperLoot",
+        AutoSuperLootDesc = "Insta-kills any monsters and SuperLoot entities that spawn in the map",
+
+        -- Rewards Tab
+        AutoClaimAllTitle = "Auto Claim Daily & Online Gifts",
         AutoClaimAllDesc = "Continuously claims online gift rewards and index level-ups",
-        AutoClaimIndexTitle = "📖 Auto Claim Index (Exp & Level)",
+        AutoClaimIndexTitle = "Auto Claim Index Exp & Level",
         AutoClaimIndexDesc = "Continuously scans unlocked Weapon, Armor, Hat, and Ore index entries for Exp & Level rewards",
-        BtnClaimIndexTitle = "📖 Instant Claim All Index Rewards",
+        BtnClaimIndexTitle = "Instant Claim All Index Rewards",
         BtnClaimIndexDesc = "Claims all pending unlocked weapons, armors, hats, and ores in Index",
-        BtnInstantClaimIndexTitle = "📖 Instant Claim All Index Rewards",
+        BtnInstantClaimIndexTitle = "Instant Claim All Index Rewards",
         BtnInstantClaimIndexDesc = "Claims all pending unlocked weapons, armors, hats, and ores in Index",
-        BtnOnlineTitle = "🎁 Claim All Online Gifts (1 - 12)",
-        BtnTicketTitle = "🎫 Claim Daily Dungeon Ticket",
-        BtnGroupTitle = "👑 Claim Group Gift & Update Reward",
-        BtnCodesTitle = "🏷️ Redeem All Active Promo Codes",
+        BtnOnlineTitle = "Claim All Online Gifts (1 - 12)",
+        BtnTicketTitle = "Claim Daily Dungeon Ticket",
+        BtnGroupTitle = "Claim Group & Update Gifts",
+        BtnCodesTitle = "Redeem All Active Promo Codes",
 
-        LanguageTitle = "🌐 Language / เลือกภาษา",
-        ProfileTitle = "👤 Active Account Profile",
+        -- Settings Tab
+        LanguageTitle = "Language / เลือกภาษา",
+        ProfileTitle = "Active Account Profile",
         ProfileContent = "Account: %s (%s)\nFolder: %s",
-        AutoSaveTitle = "💾 Per-Account Auto Save System",
+        AutoSaveTitle = "Per-Account Auto Save System",
         AutoSaveContent = "Auto Save is ACTIVE and isolated per account.\nSettings and autoload are saved specifically for %s.",
-        AutoSaveToggleTitle = "💾 Enable Auto Save",
+        AutoSaveToggleTitle = "Enable Auto Save",
         AutoSaveToggleDesc = "Automatically writes configuration to file whenever any toggle is clicked",
-        AntiAFKTitle = "🛡️ Anti-AFK (Zero Disconnect & Rejoin)",
-        AntiAFKDesc = "Disables Roblox 20-minute idle kicks and pulses anti-afk input",
-        BtnForceSaveTitle = "💾 Force Save All Settings Now",
+        BtnForceSaveTitle = "Force Save Settings Now",
         BtnForceSaveDesc = "Immediately writes current setup to disk",
-
-        WindowScaleTitle = "🔍 Window UI Scale (Zoom)",
+        AntiAFKTitle = "Anti-AFK Protection",
+        AntiAFKDesc = "Disables Roblox 20-minute idle kicks and pulses anti-afk input",
+        WindowScaleTitle = "Window UI Scale (Zoom)",
         WindowScaleDesc = "Adjust overall UI scale percentage (60% - 125%)",
-        WindowPresetTitle = "📐 Window Size Preset",
-        BtnResetWindowSizeTitle = "🔄 Reset Window Size & Scale",
+        WindowPresetTitle = "Window Size Preset",
+        BtnResetWindowSizeTitle = "Reset Window Size & Scale",
         BtnResetWindowSizeDesc = "Restore window dimensions and zoom back to default",
         NotifyWindowReset = "Window size & scale restored to default!",
 
@@ -1689,134 +1826,182 @@ local I18N = {
         NotifySaved = "Configuration saved to disk!",
     },
     TH = {
-        TabBypass = "Bypass 🔥",
+        TabBypass = "🔥 Bypass",
         TabFarm = "ฟาร์ม",
         TabForge = "หลอมอุปกรณ์",
         TabCombat = "ต่อสู้/ดันเจี้ยน",
         TabRewards = "รับรางวัล",
         TabSettings = "ตั้งค่า",
 
-        BypassInfoTitle = "🔥 ระบบเจาะระบบ Master Bypass ขั้นสุดยอด",
+        -- Section Headers
+        SecBypassCore = "ระบบหลัก",
+        SecBypassMovement = "การเคลื่อนที่ & มุมมอง",
+        SecBypassActions = "คำสั่งด่วน",
+
+        SecFarmStats = "ข้อมูลผู้เล่น",
+        SecFarmTrain = "ฝึกพลัง & รีเบิร์ธ",
+        SecFarmSeason = "ซีซั่น 2 & สัตว์เลี้ยง",
+        SecFarmOres = "แร่ & กระเป๋า",
+        SecFarmRaid = "ดันเจี้ยน Stage 27",
+
+        SecForgeCraft = "หลอมอุปกรณ์",
+        SecForgeGear = "จัดการอุปกรณ์",
+        SecForgeAstral = "เซ็ตเทพ Astral Genesis",
+
+        SecCombatTower = "หอคอยเยือกแข็ง (ชั้น 1-50)",
+        SecCombatBoss = "บอสโลก",
+        SecCombatSkills = "สกิล & การโจมตี",
+
+        SecRewardsAuto = "รับรางวัลอัตโนมัติ",
+        SecRewardsInstant = "กดรับของรางวัลทันที",
+
+        SecSettingsProfile = "ภาษา & ข้อมูลบัญชี",
+        SecSettingsSave = "ระบบบันทึก & กันหลุด",
+        SecSettingsWindow = "ปรับแต่งหน้าต่าง",
+        SecSettingsConfig = "จัดการการตั้งค่า (Config)",
+
+        -- Bypass Tab
+        BypassInfoTitle = "ระบบ Master Bypass ขั้นสุดยอด",
         BypassInfoContent = "ปลดล็อก GamePass ทุกอย่างฟรี, วันช็อตมอนทั้งแมพดาเมจ 1e30, เลือดอมตะ 100%, และคูณดวง/ดาเมจ/เหรียญมหาศาล",
-        UnlockGamePassesTitle = "👑 ปลดล็อก GamePass & VIP ทั้งหมดฟรี",
+        UnlockGamePassesTitle = "ปลดล็อก GamePass & VIP ทั้งหมด",
         UnlockGamePassesDesc = "ปลดล็อก VIP, SuperLuck, UltraLuck, CommonLuck, MoreOre, SkipForge, AutoCollectOre, 2xDamage, SeasonVIP และแท่นฝึก VIP 9-11 ฟรีไม่ต้องเติม Robux",
-        OmniKillAuraTitle = "⚔️ ออร่าวันช็อตมอนทั้งแมพ (ดาเมจ 1e30)",
-        OmniKillAuraDesc = "กำจัดมอนสเตอร์ บอส และ SuperLoot ทุกตัวในแมพทันทีด้วยดาเมจ 1,000,000,000,000,000,000,000,000,000,000",
-        GodModeTitle = "🛡️ เลือดอมตะ God Mode (ไร้ดาเมจ)",
+        OmniKillAuraTitle = "ออร่าวันช็อตมอนทั้งแมพ (1e30)",
+        OmniKillAuraDesc = "กำจัดมอนสเตอร์ บอส และ SuperLoot ทุกตัวในแมพทันทีด้วยดาเมจ 1e30",
+        GodModeTitle = "โหมดอมตะ (ไม่ลดเลือด)",
         GodModeDesc = "ล็อกเลือดเต็ม 100% ตลอดเวลา ป้องกันการโดนมอนสเตอร์หรือบอสตีตาย",
-        InsaneStatsTitle = "⚡ ตัวคูณสเตตัสระดับเทพ (+5000% Boost)",
+        InsaneStatsTitle = "ตัวคูณสเตตัสระดับเทพ (+5000%)",
         InsaneStatsDesc = "Hook สูตรคำนวณของเกม เพิ่มค่า Luck, Damage, Coins และ Ore Drop อัตราสูงพิเศษ",
-        SpeedHackTitle = "🏃 เปิดใช้งานเร่งความเร็วเดิน",
+        SpeedHackTitle = "เร่งความเร็วเดิน",
         SpeedHackDesc = "บังคับความเร็วเดินของตัวละคร (16 - 150)",
-        WalkSpeedSliderTitle = "🏃 ปรับความเร็วเดิน (WalkSpeed)",
-        JumpHackTitle = "🦘 เปิดใช้งานกระโดดสูง",
+        WalkSpeedSliderTitle = "ความเร็วเดิน (WalkSpeed)",
+        JumpHackTitle = "เปิดใช้งานกระโดดสูง",
         JumpHackDesc = "บังคับความสูงในการกระโดด (50 - 200)",
-        JumpPowerSliderTitle = "🦘 ปรับแรงกระโดด (JumpPower)",
-        NoclipTitle = "👻 เดินทะลุกำแพง (Noclip)",
+        JumpPowerSliderTitle = "แรงกระโดด (JumpPower)",
+        NoclipTitle = "เดินทะลุกำแพง (Noclip)",
         NoclipDesc = "ปิดระบบชนของตัวละคร ทำให้เดินทะลุกำแพง สิ่งกีดขวาง และประตูได้อิสระ",
-        InfiniteJumpTitle = "🪶 กระโดดกลางอากาศไม่จำกัด (Infinite Jump)",
+        InfiniteJumpTitle = "กระโดดกลางอากาศไม่จำกัด",
         InfiniteJumpDesc = "กระโดดได้ต่อเนื่องบนอากาศโดยไม่ต้องแตะพื้น",
-        DisableBlurTitle = "👁️ ปิดภาพเบลอหน้าจอ (Clear Screen / No Blur)",
-        DisableBlurDesc = "ปิดเอฟเฟกต์เบลอ TrainDOF และ Depth of Field ถาวร หน้าจอชัดใส 100% ขณะเล่นและเทรนพลัง",
-        BtnNukeAllTitle = "💥 ล้างบางมอนสเตอร์ทั้งแมพทันที",
+        DisableBlurTitle = "ปิดภาพเบลอหน้าจอ (Clear Screen)",
+        DisableBlurDesc = "ปิดเอฟเฟกต์เบลอ TrainDOF และ Depth of Field ถาวร หน้าจอชัดใส 100%",
+        BtnNukeAllTitle = "ล้างบางมอนสเตอร์ทั้งแมพทันที",
         BtnNukeAllDesc = "ส่งดาเมจ 1e30 ใส่มอนสเตอร์ทุกตัวที่อยู่ในแมพตอนนี้ในพริบตา",
-        BtnVacuumOresTitle = "🧲 ดูดแร่ทั่วทั้งแมพเข้าตัวทันที",
+        BtnVacuumOresTitle = "ดูดแร่ทั่วทั้งแมพเข้าตัวทันที",
         BtnVacuumOresDesc = "เก็บแร่และหินอัปเกรดทั้งหมดที่ตกอยู่ในแมพเข้าตัวทันที",
 
-        StatTitle = "📊 ข้อมูลสถิติผู้เล่นเรียลไทม์",
-        AutoTrainTitle = "⚡ ฟาร์มเทรนพลังอัตโนมัติ (เร็วสูงสุด)",
+        -- Farm Tab
+        StatTitle = "ข้อมูลสถิติผู้เล่นเรียลไทม์",
+        AutoTrainTitle = "เทรนพลังอัตโนมัติ (แท่นสูงสุด)",
         AutoTrainDesc = "วาปไปยังจุดเทรนที่ดีที่สุดที่ปลดล็อกแล้ว และเริ่มเทรนที่ตัวคูณสูงสุดทันที",
-        Force100xTrainTitle = "👑 บังคับเทรนพลัง x100 (ฟรี ไม่ต้องซื้อ GamePass)",
+        Force100xTrainTitle = "ล็อกแท่นเทรน VIP 100x",
         Force100xTrainDesc = "ปลดล็อกตัวคูณพลัง x100 เท่าของโซน VIP ตลอดเวลาโดยไม่ต้องซื้อเกมพาส",
-        AutoRebirthTitle = "🔄 จุติอัตโนมัติ (Auto Rebirth ทันที)",
+        AutoRebirthTitle = "รีเบิร์ธอัตโนมัติต่อเนื่อง",
         AutoRebirthDesc = "กดจุติทันทีเมื่อเลเวลถึงเกณฑ์กำหนดเพื่อเพิ่มตัวคูณพลัง",
-        AutoStage27Title = "🚀 ลูปตีมอน Stage 27 วาปไป-กลับ",
-        AutoStage27Desc = "วาปไปด่าน 27 ฆ่ามอนทั้งหมด ดูดแร่ กดปุ่ม Back แล้วรอคูลดาวน์ 5 วินาทีเพื่อเริ่มลูปใหม่",
-        BtnStage27Title = "⚡ วาปด่าน 27 ตีมอน เก็บแร่ วาปกลับ (1 รอบ)",
-        BtnStage27Desc = "สั่งลูปด่าน 27 ทำงานทันที 1 รอบ",
-        AutoCollectOresTitle = "🧲 ดูดแร่อัตโนมัติ (แม่เหล็กทั่วแมพ)",
-        AutoCollectOresDesc = "เก็บแร่และกด Proximity Prompt ดึงแร่ทั่วทั้งแมพเข้าตัวอัตโนมัติ",
-        AutoSmartPackTitle = "📦 หลอมแร่อัตโนมัติเมื่อกระเป๋าเต็ม (10 ก้อน)",
-        AutoSmartPackDesc = "เมื่อกระเป๋าแร่เต็ม 24 ช่อง จะนำแร่ 10 ก้อนไปหลอมเป็นอุปกรณ์เพื่อเคลียร์พื้นที่",
-        BtnCollectOresTitle = "🧲 ดูดแร่บนพื้นทั้งหมดทันที",
-        BtnCollectOresDesc = "เก็บแร่ทุกชิ้นที่ตกอยู่บนพื้นทั่วแมพในครั้งเดียว",
-        BtnWarpTrainTitle = "📍 วาปไปยังจุดเทรนที่ดีที่สุด",
+        BtnWarpTrainTitle = "วาปไปยังจุดเทรนที่ดีที่สุด",
         BtnWarpTrainDesc = "วาปตัวละครไปยังแท่นเทรนพลังที่มีตัวคูณสูงสุดที่ปลดล็อกแล้ว",
-        BtnMaxUpgradesTitle = "⭐ อัปเกรดสกิลติดตัวเต็ม (Train / Luck / OrePack)",
+        BtnMaxUpgradesTitle = "อัปเกรดสกิลติดตัวเต็มทุกสาย",
         BtnMaxUpgradesDesc = "อัปเกรดพลังเทรน ค่าดวง และความจุกระเป๋าแร่ขึ้นเลเวลสูงสุด",
 
-        AutoForgeTitle = "🔥 หลอมอุปกรณ์อัตโนมัติ (ทีละ 10 ก้อน)",
+        AutoFarmSS2Title = "ปั้มเหรียญ SS2 อัตโนมัติ (หอคอย 50)",
+        AutoFarmSS2Desc = "ยิงรอบดันเจี้ยนชั้น 50 ต่อเนื่อง ปั้มเหรียญซีซั่น 2 รัวๆ พร้อมหินออฟและแร่",
+        BtnFarmSS2Title = "ปั้มเหรียญ SS2 ทันที (100 รอบ)",
+        BtnFarmSS2Desc = "ยิงรอบดันเจี้ยนชั้น 50 รวดเดียว 100 รอบในพริบตา",
+        NotifySS2Farmed = "ปั้มเหรียญ SS2 สำเร็จ %d รอบ (+%s เหรียญ)!",
+        AutoPetLuckTitle = "สุ่ม Pet Luck อัตโนมัติ",
+        AutoPetLuckDesc = "สุ่มสัตว์เลี้ยงซีซั่น 2 อัตโนมัติทันทีที่เหรียญ SS2 พอ (ครั้งละ 400 เหรียญ) บายพาสแอนิเมชัน ไม่ต้องเปิดหน้าต่างเกม",
+        BtnRollPetLuckTitle = "สุ่ม Pet Luck ทันที (10 ตัว)",
+        BtnRollPetLuckDesc = "กดสุ่มสัตว์เลี้ยง Season 2 รวดเดียว 10 ตัวทันที (ใช้ 4,000 เหรียญ SS2)",
+        NotifyPetLuckRoll = "สุ่มได้สัตว์เลี้ยง %s [%s]!",
+        NotifyPetLuckBurst = "สุ่มสัตว์เลี้ยง Season 2 สำเร็จ %d ตัว!",
+        NotifyNotEnoughCoins = "เหรียญ SS2 ไม่พอ! ต้องการอย่างน้อย 400 เหรียญต่อการสุ่ม 1 ครั้ง",
+
+        AutoCollectOresTitle = "เก็บแร่อัตโนมัติ (ทั่วทั้งแมพ)",
+        AutoCollectOresDesc = "เก็บแร่และกด Proximity Prompt ดึงแร่ทั่วทั้งแมพเข้าตัวอัตโนมัติ",
+        AutoSmartPackTitle = "หลอมแร่อัตโนมัติเมื่อกระเป๋าเต็ม",
+        AutoSmartPackDesc = "เมื่อกระเป๋าแร่เต็ม 24 ช่อง จะนำแร่ 10 ก้อนไปหลอมเป็นอุปกรณ์เพื่อเคลียร์พื้นที่",
+        BtnCollectOresTitle = "ดูดแร่บนพื้นทั้งหมดทันที",
+        BtnCollectOresDesc = "เก็บแร่ทุกชิ้นที่ตกอยู่บนพื้นทั่วแมพในครั้งเดียว",
+
+        AutoStage27Title = "ฟาร์มดันเจี้ยน Stage 27 ต่อเนื่อง",
+        AutoStage27Desc = "วาปไปด่าน 27 ฆ่ามอนทั้งหมด ดูดแร่ กดปุ่ม Back แล้วรอคูลดาวน์ 5 วินาที",
+        BtnStage27Title = "ลงฟาร์ม Stage 27 ทันที 1 รอบ",
+        BtnStage27Desc = "สั่งลูปด่าน 27 ทำงานทันที 1 รอบ",
+
+        -- Forge Tab
+        AutoForgeTitle = "หลอมอุปกรณ์อัตโนมัติ (ชุดละ 10 ก้อน)",
         AutoForgeDesc = "คราฟต์อุปกรณ์ต่อเนื่องโดยใช้แร่ชุดละ 10 ก้อน",
         ForgeTypeTitle = "ประเภทอุปกรณ์ที่ต้องการหลอม",
-        AutoEquipBestTitle = "🛡️ สวมใส่อุปกรณ์ที่ดีที่สุดอัตโนมัติ (ดาบ/เกราะ/หัว)",
-        AutoEquipBestDesc = "สแกนกระเป๋าและสวมใส่อาวุธ เกราะ หมวก ที่มีพลังสูงสุดเสมอ",
-        BtnInstantEquipTitle = "⚡ สวมใส่อุปกรณ์ที่ดีที่สุดทันที",
-        BtnInstantEquipDesc = "สแกนและเปลี่ยนใส่อาวุธ ชุดเกราะ และหมวกที่เก่งที่สุดในตัวทันที",
-        BtnEquipAstralTitle = "🌌 เสกเซ็ต Astral Genesis ทันที (ไม่ต้องซื้อ)",
-        BtnEquipAstralDesc = "ติดตั้งดาบยักษ์ Astral Supernova, เกราะ Devourer, และมงกุฎ Sovereign",
-        ToggleAstralSetTitle = "👑 สวมใส่เซ็ต Astral Genesis ถาวร",
-        ToggleAstralSetDesc = "ล็อกโมเดลและเอฟเฟกต์เซ็ต Astral Genesis ติดตัวละครตลอดเวลา",
-        AutoSellAllTitle = "💰 ขายอุปกรณ์ที่ไม่ได้ใส่ทั้งหมดอัตโนมัติ",
-        AutoSellAllDesc = "ขายอุปกรณ์ที่ไม่ได้สวมใส่ในกระเป๋าเป็นเหรียญทองเป็นระยะ",
-        BtnMultiForgeTitle = "🔨 หลอมอุปกรณ์รวดเดียว 5 ครั้ง",
+        BtnMultiForgeTitle = "หลอมอุปกรณ์รวดเดียว 5 ชุด",
         BtnMultiForgeDesc = "คราฟต์อุปกรณ์ทันที 5 ชุดต่อเนื่อง",
-        BtnSellAllTitle = "🗑️ ขายอุปกรณ์ที่ไม่ได้ใส่ทั้งหมดทันที",
+        AutoEquipBestTitle = "สวมใส่อุปกรณ์ที่ดีที่สุดอัตโนมัติ",
+        AutoEquipBestDesc = "สแกนกระเป๋าและสวมใส่อาวุธ เกราะ หมวก ที่มีพลังสูงสุดเสมอ",
+        BtnInstantEquipTitle = "สวมใส่อุปกรณ์ที่ดีที่สุดทันที",
+        BtnInstantEquipDesc = "สแกนและเปลี่ยนใส่อาวุธ ชุดเกราะ และหมวกที่เก่งที่สุดในตัวทันที",
+        AutoSellAllTitle = "ขายอุปกรณ์ที่ไม่ได้ใส่อัตโนมัติ",
+        AutoSellAllDesc = "ขายอุปกรณ์ที่ไม่ได้สวมใส่ในกระเป๋าเป็นเหรียญทองเป็นระยะ",
+        BtnSellAllTitle = "ขายอุปกรณ์ที่ไม่ได้ใส่ทั้งหมดทันที",
         BtnSellAllDesc = "ขายอุปกรณ์ทั้งหมดที่ไม่ได้สวมใส่เพื่อรับเหรียญทองทันที",
+        ToggleAstralSetTitle = "สวมใส่เซ็ต Astral Genesis ถาวร",
+        ToggleAstralSetDesc = "ล็อกโมเดลและเอฟเฟกต์เซ็ต Astral Genesis ติดตัวละครตลอดเวลา",
+        BtnEquipAstralTitle = "เสกเซ็ต Astral Genesis ทันที",
+        BtnEquipAstralDesc = "ติดตั้งดาบยักษ์ Astral Supernova, เกราะ Devourer, และมงกุฎ Sovereign",
 
-        AutoDungeonTitle = "🏰 ตีหอคอยอัตโนมัติ 1-50 จบรวดเดียว (Auto Tower 1-50)",
-        AutoDungeonDesc = "เข้าสู่หอคอย Frozen Tower และกวาดล้างรวดเดียวตั้งแต่ชั้น 1 ถึง 50 ทันที โดยไม่ต้องเสียเวลาไต่ทีละชั้น",
-        BtnInstantTowerTitle = "⚡ กวาดล้างหอคอยชั้น 1-50 ทันที (คลิกเดียวจบ 50 ชั้น)",
+        -- Combat Tab
+        AutoDungeonTitle = "เคลียร์หอคอย 1-50 อัตโนมัติ",
+        AutoDungeonDesc = "เข้าสู่หอคอย Frozen Tower และกวาดล้างรวดเดียวตั้งแต่ชั้น 1 ถึง 50 ทันที",
+        BtnInstantTowerTitle = "เคลียร์หอคอยชั้น 1-50 ทันที (1-Click)",
         BtnInstantTowerDesc = "สังหารมอนสเตอร์ด้วย 1e30 เคลียร์รวดเดียว 50 ชั้นในไม่กี่วินาที พร้อมดูดของรางวัลทั้งหมดเข้าตัว",
-        BtnEnterFloor50Title = "🚪 วาปเข้าหอคอยชั้น 50 โดยตรง",
+        BtnEnterFloor50Title = "เข้าสู่หอคอยชั้น 50 โดยตรง",
         BtnEnterFloor50Desc = "เข้าสู่ชั้นสูงสุด (ชั้น 50) ของหอคอยทันที",
-        BtnEnterDungeonTitle = "🚪 เข้าสู่หอคอยชั้นที่ 1",
-        BtnExitDungeonTitle = "🏃 ออกจากหอคอย / ดันเจี้ยน",
-        AutoSuperLootTitle = "🎯 ฆ่ามอนสเตอร์ & กล่อง SuperLoot ทันที",
-        AutoSuperLootDesc = "โจมตีปลิดชีพมอนสเตอร์และกล่อง SuperLoot ทั่วทั้งแมพทันทีที่เกิด",
-        AutoSkillsTitle = "💥 กดสกิลอาวุธอัตโนมัติต่อเนื่อง",
-        AutoSkillsDesc = "ใช้สกิลของอาวุธที่ติดตั้งอยู่ตลอดเวลา",
-        BtnCastAstralTitle = "🌌 ใช้สกิล Astral Burst Domain (1100% ดาเมจ)",
-        BtnCastAstralDesc = "ปล่อยสกิลมังกร 3 หัวสร้างโดเมนดวงดาวโจมตีต่อเนื่อง 1100% รอบตัว",
-        ToggleAstralSkillTitle = "🌌 ปล่อยสกิล Astral Burst Domain อัตโนมัติ",
-        ToggleAstralSkillDesc = "ปล่อยสกิล Astral Burst Domain ต่อเนื่องอัตโนมัติในการต่อสู้",
+        BtnEnterDungeonTitle = "เข้าสู่หอคอยชั้นที่ 1",
+        BtnExitDungeonTitle = "ออกจากหอคอย / ดันเจี้ยน",
 
-        WorldBossStatusTitle = "👹 สถานะบอสโลก (World Boss)",
-        AutoWorldBossTitle = "👹 ตีบอสโลกอัตโนมัติ (วันช็อต 1e30 & รับรางวัล)",
+        WorldBossStatusTitle = "สถานะบอสโลก",
+        AutoWorldBossTitle = "ตีบอสโลกอัตโนมัติ (วันช็อต & รับของ)",
         AutoWorldBossDesc = "วาปเข้าห้องบอสโลกอัตโนมัติเมื่อเกิด วันช็อตด้วยดาเมจ 1e30 สุ่มเลือกการ์ดรางวัล และวาปกลับมาฟาร์มต่อ",
-        BtnJoinWorldBossTitle = "🚪 บังคับเข้าห้องบอสโลกทันที",
+        BtnJoinWorldBossTitle = "เข้าห้องบอสโลกทันที",
         BtnJoinWorldBossDesc = "วาปเข้าสู่สนามประลองบอสโลกและลงทะเบียนต่อสู้ทันที",
-        BtnExitWorldBossTitle = "🏃 บังคับออกจากห้องบอสโลก",
+        BtnExitWorldBossTitle = "ออกจากห้องบอสโลก",
         BtnExitWorldBossDesc = "ออกจากสนามประลองบอสโลกและวาปกลับจุดเกิดทันที",
 
-        AutoClaimAllTitle = "🎁 รับรางวัลทั้งหมดอัตโนมัติ (Online/ประจำวัน/Index)",
+        AutoSkillsTitle = "กดสกิลอาวุธอัตโนมัติต่อเนื่อง",
+        AutoSkillsDesc = "ใช้สกิลของอาวุธที่ติดตั้งอยู่ตลอดเวลา",
+        ToggleAstralSkillTitle = "ปล่อยสกิล Astral Burst Domain อัตโนมัติ",
+        ToggleAstralSkillDesc = "ปล่อยสกิล Astral Burst Domain ต่อเนื่องอัตโนมัติในการต่อสู้",
+        BtnCastAstralTitle = "ปล่อยสกิล Astral Burst Domain ทันที",
+        BtnCastAstralDesc = "ปล่อยสกิลมังกร 3 หัวสร้างโดเมนดวงดาวโจมตีต่อเนื่อง 1100% รอบตัว",
+        AutoSuperLootTitle = "ฆ่ามอนสเตอร์ & SuperLoot ทันที",
+        AutoSuperLootDesc = "โจมตีปลิดชีพมอนสเตอร์และกล่อง SuperLoot ทั่วทั้งแมพทันทีที่เกิด",
+
+        -- Rewards Tab
+        AutoClaimAllTitle = "รับของขวัญประจำวันและออนไลน์อัตโนมัติ",
         AutoClaimAllDesc = "กดรับของขวัญออนไลน์ ตั๋วดันเจี้ยน และรางวัลล็อกอินต่อเนื่อง",
-        AutoClaimIndexTitle = "📖 รับรางวัล Index อัตโนมัติ (Exp & Level)",
+        AutoClaimIndexTitle = "รับรางวัล Index (Exp & Level) อัตโนมัติ",
         AutoClaimIndexDesc = "สแกน Index ดาบ เกราะ หมวก แร่ ที่ปลดล็อกแล้วและกดรับ Exp พร้อมรางวัลเลเวล",
-        BtnClaimIndexTitle = "📖 รับรางวัล Index ทั้งหมดทันที",
+        BtnClaimIndexTitle = "รับรางวัล Index ทั้งหมดทันที",
         BtnClaimIndexDesc = "กดรับ Exp และรางวัล Index ทั้งหมดที่ยังค้างอยู่ในคลิกเดียว",
-        BtnInstantClaimIndexTitle = "📖 รับรางวัล Index ทั้งหมดทันที",
+        BtnInstantClaimIndexTitle = "รับรางวัล Index ทั้งหมดทันที",
         BtnInstantClaimIndexDesc = "กดรับ Exp และรางวัล Index ทั้งหมดที่ยังค้างอยู่ในคลิกเดียว",
-        BtnOnlineTitle = "🎁 รับของขวัญออนไลน์ทั้งหมด (1 - 12)",
-        BtnTicketTitle = "🎫 รับตั๋วดันเจี้ยนประจำวัน",
-        BtnGroupTitle = "👑 รับรางวัลกลุ่ม & รางวัลอัปเดตเกม",
-        BtnCodesTitle = "🏷️ ใส่โค้ดรับของรางวัลทั้งหมด",
+        BtnOnlineTitle = "รับของขวัญออนไลน์ทั้งหมด (1 - 12)",
+        BtnTicketTitle = "รับตั๋วดันเจี้ยนประจำวัน",
+        BtnGroupTitle = "รับของขวัญกลุ่ม & รางวัลอัปเดต",
+        BtnCodesTitle = "ใส่โค้ดรับของรางวัลทั้งหมด",
 
-        LanguageTitle = "🌐 เลือกภาษา / Language",
-        ProfileTitle = "👤 ข้อมูลโปรไฟล์บัญชีนี้",
+        -- Settings Tab
+        LanguageTitle = "เลือกภาษา / Language",
+        ProfileTitle = "ข้อมูลบัญชีผู้ใช้",
         ProfileContent = "บัญชี: %s (%s)\nโฟลเดอร์: %s",
-        AutoSaveTitle = "💾 ระบบบันทึกอัตโนมัติแยกบัญชี",
+        AutoSaveTitle = "ระบบบันทึกอัตโนมัติแยกบัญชี",
         AutoSaveContent = "ระบบ Auto Save ทำงานปกติและแยกโปรไฟล์ตามไอดี\nการตั้งค่าจะถูกบันทึกให้ %s โดยเฉพาะ",
-        AutoSaveToggleTitle = "💾 เปิดใช้งาน Auto Save",
+        AutoSaveToggleTitle = "เปิดใช้งาน Auto Save",
         AutoSaveToggleDesc = "บันทึกการตั้งค่าลงไฟล์ของบัญชีนี้อัตโนมัติทุกครั้งที่มีการเปลี่ยนตัวเลือก",
-        AntiAFKTitle = "🛡️ ระบบกันหลุด Anti-AFK (ไม่โดนเตะ ไม่ต้อง Rejoin)",
-        AntiAFKDesc = "ปิดระบบเตะ 20 นาทีของ Roblox และส่งสัญญาณรีเซ็ตเวลาอัตโนมัติ",
-        BtnForceSaveTitle = "💾 บันทึกการตั้งค่าลงดิสก์ทันที",
+        BtnForceSaveTitle = "บันทึกการตั้งค่าทันที",
         BtnForceSaveDesc = "เขียนข้อมูลการตั้งค่าปัจจุบันลงไฟล์ดิสก์ทันที",
-
-        WindowScaleTitle = "🔍 สเกลขนาดหน้าต่าง (Zoom UI)",
+        AntiAFKTitle = "ระบบกันหลุด Anti-AFK",
+        AntiAFKDesc = "ปิดระบบเตะ 20 นาทีของ Roblox และส่งสัญญาณรีเซ็ตเวลาอัตโนมัติ",
+        WindowScaleTitle = "สเกลขนาดหน้าต่าง (Zoom UI)",
         WindowScaleDesc = "ปรับย่อ-ขยายขนาดหน้าต่างและเมนูทั้งหมด (60% - 125%)",
-        WindowPresetTitle = "📐 ขนาดหน้าต่างสำเร็จรูป",
-        BtnResetWindowSizeTitle = "🔄 รีเซ็ตขนาดหน้าต่างและสเกล",
+        WindowPresetTitle = "ขนาดหน้าต่างสำเร็จรูป",
+        BtnResetWindowSizeTitle = "รีเซ็ตขนาดหน้าต่างและสเกล",
         BtnResetWindowSizeDesc = "คืนค่าขนาดหน้าต่างและระยะซูมกลับเป็นค่าเริ่มต้น",
         NotifyWindowReset = "รีเซ็ตขนาดหน้าต่างและสเกลเป็นค่าเริ่มต้นเรียบร้อย!",
 
@@ -1852,17 +2037,52 @@ local function UpdateLanguage(lang)
         Settings = t.TabSettings,
     }
     for tabKey, tabObj in pairs(Tabs) do
-        if tabObj and tabObj.Frame and tabNameMap[tabKey] then
-            for _, desc in ipairs(tabObj.Frame:GetDescendants()) do
-                if desc:IsA("TextLabel") then
-                    desc.Text = tabNameMap[tabKey]
+        if tabObj and tabNameMap[tabKey] then
+            tabObj.Title = tabNameMap[tabKey]
+            if tabObj.Frame then
+                for _, desc in ipairs(tabObj.Frame:GetDescendants()) do
+                    if desc:IsA("TextLabel") then
+                        desc.Text = tabNameMap[tabKey]
+                    end
                 end
+            end
+            if tabObj.Selected and Window and Window.TabDisplay then
+                Window.TabDisplay.Text = tabNameMap[tabKey]
             end
         end
     end
 
     -- Update Elements
     local E = UIElements
+
+    -- Sections
+    if E.SecBypassCore then E.SecBypassCore:SetTitle(t.SecBypassCore) end
+    if E.SecBypassMovement then E.SecBypassMovement:SetTitle(t.SecBypassMovement) end
+    if E.SecBypassActions then E.SecBypassActions:SetTitle(t.SecBypassActions) end
+
+    if E.SecFarmStats then E.SecFarmStats:SetTitle(t.SecFarmStats) end
+    if E.SecFarmTrain then E.SecFarmTrain:SetTitle(t.SecFarmTrain) end
+    if E.SecFarmSeason then E.SecFarmSeason:SetTitle(t.SecFarmSeason) end
+    if E.SecFarmOres then E.SecFarmOres:SetTitle(t.SecFarmOres) end
+    if E.SecFarmRaid then E.SecFarmRaid:SetTitle(t.SecFarmRaid) end
+
+    if E.SecForgeCraft then E.SecForgeCraft:SetTitle(t.SecForgeCraft) end
+    if E.SecForgeGear then E.SecForgeGear:SetTitle(t.SecForgeGear) end
+    if E.SecForgeAstral then E.SecForgeAstral:SetTitle(t.SecForgeAstral) end
+
+    if E.SecCombatTower then E.SecCombatTower:SetTitle(t.SecCombatTower) end
+    if E.SecCombatBoss then E.SecCombatBoss:SetTitle(t.SecCombatBoss) end
+    if E.SecCombatSkills then E.SecCombatSkills:SetTitle(t.SecCombatSkills) end
+
+    if E.SecRewardsAuto then E.SecRewardsAuto:SetTitle(t.SecRewardsAuto) end
+    if E.SecRewardsInstant then E.SecRewardsInstant:SetTitle(t.SecRewardsInstant) end
+
+    if E.SecSettingsProfile then E.SecSettingsProfile:SetTitle(t.SecSettingsProfile) end
+    if E.SecSettingsSave then E.SecSettingsSave:SetTitle(t.SecSettingsSave) end
+    if E.SecSettingsWindow then E.SecSettingsWindow:SetTitle(t.SecSettingsWindow) end
+    if E.SecSettingsConfig then E.SecSettingsConfig:SetTitle(t.SecSettingsConfig) end
+
+    -- Bypass Tab
     if E.BypassParagraph then E.BypassParagraph:SetTitle(t.BypassInfoTitle) E.BypassParagraph:SetDesc(t.BypassInfoContent) end
     if E.ToggleUnlockAllGamePasses then E.ToggleUnlockAllGamePasses:SetTitle(t.UnlockGamePassesTitle) E.ToggleUnlockAllGamePasses:SetDesc(t.UnlockGamePassesDesc) end
     if E.ToggleOmniKillAura then E.ToggleOmniKillAura:SetTitle(t.OmniKillAuraTitle) E.ToggleOmniKillAura:SetDesc(t.OmniKillAuraDesc) end
@@ -1878,43 +2098,53 @@ local function UpdateLanguage(lang)
     if E.BtnNukeAllMobs then E.BtnNukeAllMobs:SetTitle(t.BtnNukeAllTitle) E.BtnNukeAllMobs:SetDesc(t.BtnNukeAllDesc) end
     if E.BtnVacuumOres then E.BtnVacuumOres:SetTitle(t.BtnVacuumOresTitle) E.BtnVacuumOres:SetDesc(t.BtnVacuumOresDesc) end
 
+    -- Farm Tab
     if E.StatParagraph then E.StatParagraph:SetTitle(t.StatTitle) end
     if E.ToggleAutoTrain then E.ToggleAutoTrain:SetTitle(t.AutoTrainTitle) E.ToggleAutoTrain:SetDesc(t.AutoTrainDesc) end
     if E.ToggleForce100xTrain then E.ToggleForce100xTrain:SetTitle(t.Force100xTrainTitle) E.ToggleForce100xTrain:SetDesc(t.Force100xTrainDesc) end
     if E.ToggleAutoRebirth then E.ToggleAutoRebirth:SetTitle(t.AutoRebirthTitle) E.ToggleAutoRebirth:SetDesc(t.AutoRebirthDesc) end
-    if E.ToggleStage27Raid then E.ToggleStage27Raid:SetTitle(t.AutoStage27Title) E.ToggleStage27Raid:SetDesc(t.AutoStage27Desc) end
-    if E.BtnStage27Once then E.BtnStage27Once:SetTitle(t.BtnStage27Title) E.BtnStage27Once:SetDesc(t.BtnStage27Desc) end
-    if E.ToggleAutoCollectOres then E.ToggleAutoCollectOres:SetTitle(t.AutoCollectOresTitle) E.ToggleAutoCollectOres:SetDesc(t.AutoCollectOresDesc) end
-    if E.ToggleSmartPack then E.ToggleSmartPack:SetTitle(t.AutoSmartPackTitle) E.ToggleSmartPack:SetDesc(t.AutoSmartPackDesc) end
-    if E.BtnCollectAllOres then E.BtnCollectAllOres:SetTitle(t.BtnCollectOresTitle) E.BtnCollectAllOres:SetDesc(t.BtnCollectOresDesc) end
     if E.BtnTeleportBestTrain then E.BtnTeleportBestTrain:SetTitle(t.BtnWarpTrainTitle) E.BtnTeleportBestTrain:SetDesc(t.BtnWarpTrainDesc) end
     if E.BtnMaxUpgradePassives then E.BtnMaxUpgradePassives:SetTitle(t.BtnMaxUpgradesTitle) E.BtnMaxUpgradePassives:SetDesc(t.BtnMaxUpgradesDesc) end
 
+    if E.ToggleAutoFarmSeason2Coins then E.ToggleAutoFarmSeason2Coins:SetTitle(t.AutoFarmSS2Title) E.ToggleAutoFarmSeason2Coins:SetDesc(t.AutoFarmSS2Desc) end
+    if E.BtnInstantFarmSS2Coins then E.BtnInstantFarmSS2Coins:SetTitle(t.BtnFarmSS2Title) E.BtnInstantFarmSS2Coins:SetDesc(t.BtnFarmSS2Desc) end
+    if E.ToggleAutoPetLuck then E.ToggleAutoPetLuck:SetTitle(t.AutoPetLuckTitle) E.ToggleAutoPetLuck:SetDesc(t.AutoPetLuckDesc) end
+    if E.BtnRollPetLuck10x then E.BtnRollPetLuck10x:SetTitle(t.BtnRollPetLuckTitle) E.BtnRollPetLuck10x:SetDesc(t.BtnRollPetLuckDesc) end
+
+    if E.ToggleAutoCollectOres then E.ToggleAutoCollectOres:SetTitle(t.AutoCollectOresTitle) E.ToggleAutoCollectOres:SetDesc(t.AutoCollectOresDesc) end
+    if E.ToggleSmartPack then E.ToggleSmartPack:SetTitle(t.AutoSmartPackTitle) E.ToggleSmartPack:SetDesc(t.AutoSmartPackDesc) end
+    if E.BtnCollectAllOres then E.BtnCollectAllOres:SetTitle(t.BtnCollectOresTitle) E.BtnCollectAllOres:SetDesc(t.BtnCollectOresDesc) end
+
+    if E.ToggleStage27Raid then E.ToggleStage27Raid:SetTitle(t.AutoStage27Title) E.ToggleStage27Raid:SetDesc(t.AutoStage27Desc) end
+    if E.BtnStage27Once then E.BtnStage27Once:SetTitle(t.BtnStage27Title) E.BtnStage27Once:SetDesc(t.BtnStage27Desc) end
+
+    -- Forge Tab
     if E.ToggleAutoForge then E.ToggleAutoForge:SetTitle(t.AutoForgeTitle) E.ToggleAutoForge:SetDesc(t.AutoForgeDesc) end
     if E.DropdownForgeType then E.DropdownForgeType:SetTitle(t.ForgeTypeTitle) end
+    if E.BtnInstantMultiForge then E.BtnInstantMultiForge:SetTitle(t.BtnMultiForgeTitle) E.BtnInstantMultiForge:SetDesc(t.BtnMultiForgeDesc) end
     if E.ToggleAutoEquipBest then E.ToggleAutoEquipBest:SetTitle(t.AutoEquipBestTitle) E.ToggleAutoEquipBest:SetDesc(t.AutoEquipBestDesc) end
     if E.BtnInstantEquipBest then E.BtnInstantEquipBest:SetTitle(t.BtnInstantEquipTitle) E.BtnInstantEquipBest:SetDesc(t.BtnInstantEquipDesc) end
-    if E.BtnEquipAstralSet then E.BtnEquipAstralSet:SetTitle(t.BtnEquipAstralTitle) E.BtnEquipAstralSet:SetDesc(t.BtnEquipAstralDesc) end
-    if E.ToggleAstralSet then E.ToggleAstralSet:SetTitle(t.ToggleAstralSetTitle) E.ToggleAstralSet:SetDesc(t.ToggleAstralSetDesc) end
     if E.ToggleAutoSellAll then E.ToggleAutoSellAll:SetTitle(t.AutoSellAllTitle) E.ToggleAutoSellAll:SetDesc(t.AutoSellAllDesc) end
-    if E.BtnInstantMultiForge then E.BtnInstantMultiForge:SetTitle(t.BtnMultiForgeTitle) E.BtnInstantMultiForge:SetDesc(t.BtnMultiForgeDesc) end
     if E.BtnInstantSellAll then E.BtnInstantSellAll:SetTitle(t.BtnSellAllTitle) E.BtnInstantSellAll:SetDesc(t.BtnSellAllDesc) end
+    if E.ToggleAstralSet then E.ToggleAstralSet:SetTitle(t.ToggleAstralSetTitle) E.ToggleAstralSet:SetDesc(t.ToggleAstralSetDesc) end
+    if E.BtnEquipAstralSet then E.BtnEquipAstralSet:SetTitle(t.BtnEquipAstralTitle) E.BtnEquipAstralSet:SetDesc(t.BtnEquipAstralDesc) end
 
+    -- Combat Tab
     if E.ToggleDungeonSweep then E.ToggleDungeonSweep:SetTitle(t.AutoDungeonTitle) E.ToggleDungeonSweep:SetDesc(t.AutoDungeonDesc) end
     if E.BtnInstantTower then E.BtnInstantTower:SetTitle(t.BtnInstantTowerTitle) E.BtnInstantTower:SetDesc(t.BtnInstantTowerDesc) end
     if E.BtnEnterFloor50 then E.BtnEnterFloor50:SetTitle(t.BtnEnterFloor50Title) E.BtnEnterFloor50:SetDesc(t.BtnEnterFloor50Desc) end
     if E.BtnEnterDungeon then E.BtnEnterDungeon:SetTitle(t.BtnEnterDungeonTitle) end
     if E.BtnExitDungeon then E.BtnExitDungeon:SetTitle(t.BtnExitDungeonTitle) end
-    if E.ToggleKillSuperLoot then E.ToggleKillSuperLoot:SetTitle(t.AutoSuperLootTitle) E.ToggleKillSuperLoot:SetDesc(t.AutoSuperLootDesc) end
-    if E.ToggleSkills then E.ToggleSkills:SetTitle(t.AutoSkillsTitle) E.ToggleSkills:SetDesc(t.AutoSkillsDesc) end
-    if E.BtnCastAstralSkill then E.BtnCastAstralSkill:SetTitle(t.BtnCastAstralTitle) E.BtnCastAstralSkill:SetDesc(t.BtnCastAstralDesc) end
-    if E.ToggleAstralSkill then E.ToggleAstralSkill:SetTitle(t.ToggleAstralSkillTitle) E.ToggleAstralSkill:SetDesc(t.ToggleAstralSkillDesc) end
-
     if E.WorldBossParagraph then E.WorldBossParagraph:SetTitle(t.WorldBossStatusTitle) end
     if E.ToggleAutoWorldBoss then E.ToggleAutoWorldBoss:SetTitle(t.AutoWorldBossTitle) E.ToggleAutoWorldBoss:SetDesc(t.AutoWorldBossDesc) end
     if E.BtnJoinWorldBoss then E.BtnJoinWorldBoss:SetTitle(t.BtnJoinWorldBossTitle) E.BtnJoinWorldBoss:SetDesc(t.BtnJoinWorldBossDesc) end
     if E.BtnExitWorldBoss then E.BtnExitWorldBoss:SetTitle(t.BtnExitWorldBossTitle) E.BtnExitWorldBoss:SetDesc(t.BtnExitWorldBossDesc) end
+    if E.ToggleSkills then E.ToggleSkills:SetTitle(t.AutoSkillsTitle) E.ToggleSkills:SetDesc(t.AutoSkillsDesc) end
+    if E.ToggleAstralSkill then E.ToggleAstralSkill:SetTitle(t.ToggleAstralSkillTitle) E.ToggleAstralSkill:SetDesc(t.ToggleAstralSkillDesc) end
+    if E.BtnCastAstralSkill then E.BtnCastAstralSkill:SetTitle(t.BtnCastAstralTitle) E.BtnCastAstralSkill:SetDesc(t.BtnCastAstralDesc) end
+    if E.ToggleKillSuperLoot then E.ToggleKillSuperLoot:SetTitle(t.AutoSuperLootTitle) E.ToggleKillSuperLoot:SetDesc(t.AutoSuperLootDesc) end
 
+    -- Rewards Tab
     if E.ToggleAutoClaimAll then E.ToggleAutoClaimAll:SetTitle(t.AutoClaimAllTitle) E.ToggleAutoClaimAll:SetDesc(t.AutoClaimAllDesc) end
     if E.ToggleAutoClaimIndex then E.ToggleAutoClaimIndex:SetTitle(t.AutoClaimIndexTitle) E.ToggleAutoClaimIndex:SetDesc(t.AutoClaimIndexDesc) end
     if E.BtnInstantClaimIndex then E.BtnInstantClaimIndex:SetTitle(t.BtnInstantClaimIndexTitle) E.BtnInstantClaimIndex:SetDesc(t.BtnInstantClaimIndexDesc) end
@@ -1923,6 +2153,7 @@ local function UpdateLanguage(lang)
     if E.BtnClaimGroup then E.BtnClaimGroup:SetTitle(t.BtnGroupTitle) end
     if E.BtnRedeemCodes then E.BtnRedeemCodes:SetTitle(t.BtnCodesTitle) end
 
+    -- Settings Tab
     local accountFolderRef = "StreetHub/Enhance1LootToForge/accounts/" .. (string.gsub(LocalPlayer.Name, "[^%w_]", "") .. "_" .. tostring(LocalPlayer.UserId))
     if E.ProfileParagraph then
         E.ProfileParagraph:SetTitle(t.ProfileTitle)
@@ -1933,9 +2164,8 @@ local function UpdateLanguage(lang)
         E.AutoSaveParagraph:SetDesc(string.format(t.AutoSaveContent, LocalPlayer.Name))
     end
     if E.ToggleAutoSaveSetting then E.ToggleAutoSaveSetting:SetTitle(t.AutoSaveToggleTitle) E.ToggleAutoSaveSetting:SetDesc(t.AutoSaveToggleDesc) end
-    if E.ToggleAntiAFK then E.ToggleAntiAFK:SetTitle(t.AntiAFKTitle) E.ToggleAntiAFK:SetDesc(t.AntiAFKDesc) end
     if E.BtnForceSave then E.BtnForceSave:SetTitle(t.BtnForceSaveTitle) E.BtnForceSave:SetDesc(t.BtnForceSaveDesc) end
-
+    if E.ToggleAntiAFK then E.ToggleAntiAFK:SetTitle(t.AntiAFKTitle) E.ToggleAntiAFK:SetDesc(t.AntiAFKDesc) end
     if E.DropdownLanguage then E.DropdownLanguage:SetTitle(t.LanguageTitle) end
     if E.SliderWindowScale then E.SliderWindowScale:SetTitle(t.WindowScaleTitle) E.SliderWindowScale:SetDesc(t.WindowScaleDesc) end
     if E.DropdownWindowPreset then E.DropdownWindowPreset:SetTitle(t.WindowPresetTitle) end
@@ -2005,6 +2235,8 @@ local function SaveCurrentState()
             AutoEquipBest = State.AutoEquipBest,
             AutoSellAll = State.AutoSellAll,
             AutoDungeonSweep = State.AutoDungeonSweep,
+            AutoFarmSeason2Coins = State.AutoFarmSeason2Coins,
+            AutoPetLuck = State.AutoPetLuck,
             AutoKillSuperLoot = State.AutoKillSuperLoot,
             AutoWorldBoss = State.AutoWorldBoss,
             AutoSkills = State.AutoSkills,
@@ -2077,500 +2309,7 @@ RequestAutoSave = function()
 end
 
 -- ========================================================================
--- TAB: BYPASS (MASTER EXPLOIT & UNRESTRICTED BYPASS HUB)
--- ========================================================================
-local BypassParagraph = Tabs.Bypass:AddParagraph({
-    Title = "🔥 Brutal Master Bypass Engine",
-    Content = "Unlocks all VIP GamePasses, Instant 1e30 Kill Aura, Immortal God Mode, and Extreme Stat Multipliers."
-})
-UIElements.BypassParagraph = BypassParagraph
-
-local ToggleUnlockAllGamePasses = Tabs.Bypass:AddToggle("UnlockAllGamePasses", {
-    Title = "👑 Unlock All GamePasses & VIP",
-    Description = "Grants VIP, SuperLuck, UltraLuck, CommonLuck, MoreOre, SkipForge, AutoCollectOre, 2xDamage, SeasonVIP, and VIP Train Areas 9-11 without Robux",
-    Default = true
-})
-ToggleUnlockAllGamePasses:OnChanged(function()
-    State.UnlockAllGamePasses = Options.UnlockAllGamePasses.Value
-    if State.UnlockAllGamePasses then
-        ApplyGamePassAndVIPBypass()
-    end
-    RequestAutoSave()
-end)
-UIElements.ToggleUnlockAllGamePasses = ToggleUnlockAllGamePasses
-
-local ToggleOmniKillAura = Tabs.Bypass:AddToggle("OmniKillAura", {
-    Title = "⚔️ Omni-Kill Aura (Map-Wide 1-Hit Kill 1e30)",
-    Description = "Instantly annihilates all enemies across the entire map using 1e30 damage and server execution events",
-    Default = true
-})
-ToggleOmniKillAura:OnChanged(function()
-    State.OmniKillAura = Options.OmniKillAura.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleOmniKillAura = ToggleOmniKillAura
-
-local ToggleGodMode = Tabs.Bypass:AddToggle("GodMode", {
-    Title = "🛡️ God Mode / Immortal Invincibility",
-    Description = "Completely zeroes out all incoming damage; keeps health at 100% permanently",
-    Default = true
-})
-ToggleGodMode:OnChanged(function()
-    State.GodMode = Options.GodMode.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleGodMode = ToggleGodMode
-
-local ToggleInsaneStatBoost = Tabs.Bypass:AddToggle("InsaneStatBoost", {
-    Title = "⚡ Extreme Stat Multiplier (+5000% Boost)",
-    Description = "Hooks game balance formulas for massive Luck, Damage, Coins, and Ore drop rates",
-    Default = true
-})
-ToggleInsaneStatBoost:OnChanged(function()
-    State.InsaneStatBoost = Options.InsaneStatBoost.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleInsaneStatBoost = ToggleInsaneStatBoost
-
-local ToggleNoclip = Tabs.Bypass:AddToggle("Noclip", {
-    Title = "👻 Noclip (Pass Through All Objects)",
-    Description = "Disables collision on character parts, allowing you to walk through walls and gates",
-    Default = false
-})
-ToggleNoclip:OnChanged(function()
-    State.Noclip = Options.Noclip.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleNoclip = ToggleNoclip
-
-local ToggleInfiniteJump = Tabs.Bypass:AddToggle("InfiniteJump", {
-    Title = "🪶 Infinite Jump",
-    Description = "Allows jumping repeatedly in mid-air without landing",
-    Default = false
-})
-ToggleInfiniteJump:OnChanged(function()
-    State.InfiniteJump = Options.InfiniteJump.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleInfiniteJump = ToggleInfiniteJump
-
-local ToggleDisableBlur = Tabs.Bypass:AddToggle("DisableBlur", {
-    Title = "👁️ Disable Screen Blur & DOF",
-    Description = "Permanently removes TrainDOF, Blur, and Depth of Field for a crystal clear view",
-    Default = true
-})
-ToggleDisableBlur:OnChanged(function()
-    State.DisableBlur = Options.DisableBlur.Value
-    if State.DisableBlur then
-        RemoveAllBlurs()
-    end
-    RequestAutoSave()
-end)
-UIElements.ToggleDisableBlur = ToggleDisableBlur
-
-local ToggleSpeedHack = Tabs.Bypass:AddToggle("SpeedHack", {
-    Title = "🏃 Enable WalkSpeed Boost",
-    Description = "Overrides player movement speed (16 - 150)",
-    Default = false
-})
-ToggleSpeedHack:OnChanged(function()
-    State.SpeedHack = Options.SpeedHack.Value
-    if not State.SpeedHack then
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then hum.WalkSpeed = 16 end
-    end
-    RequestAutoSave()
-end)
-UIElements.ToggleSpeedHack = ToggleSpeedHack
-
-local SliderWalkSpeed = Tabs.Bypass:AddSlider("WalkSpeedValue", {
-    Title = "🏃 Custom WalkSpeed",
-    Default = 48,
-    Min = 16,
-    Max = 150,
-    Rounding = 0,
-})
-SliderWalkSpeed:OnChanged(function(val)
-    State.WalkSpeedValue = val
-    RequestAutoSave()
-end)
-UIElements.SliderWalkSpeed = SliderWalkSpeed
-
-local ToggleJumpPowerHack = Tabs.Bypass:AddToggle("JumpPowerHack", {
-    Title = "🦘 Enable JumpPower Boost",
-    Description = "Overrides player jump height (50 - 200)",
-    Default = false
-})
-ToggleJumpPowerHack:OnChanged(function()
-    State.JumpPowerHack = Options.JumpPowerHack.Value
-    if not State.JumpPowerHack then
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if hum then hum.JumpPower = 50 end
-    end
-    RequestAutoSave()
-end)
-UIElements.ToggleJumpPowerHack = ToggleJumpPowerHack
-
-local SliderJumpPower = Tabs.Bypass:AddSlider("JumpPowerValue", {
-    Title = "🦘 Custom JumpPower",
-    Default = 80,
-    Min = 50,
-    Max = 200,
-    Rounding = 0,
-})
-SliderJumpPower:OnChanged(function(val)
-    State.JumpPowerValue = val
-    RequestAutoSave()
-end)
-UIElements.SliderJumpPower = SliderJumpPower
-
-local BtnNukeAllMobs = Tabs.Bypass:AddButton({
-    Title = "💥 Nuke All Current Map Enemies Now",
-    Description = "Sends 1e30 damage to every monster currently present in workspace",
-    Callback = function()
-        local count = 0
-        local folders = {
-            workspace:FindFirstChild("EnemyFolder"),
-            workspace:FindFirstChild("EnemyFolder_Server")
-        }
-        for _, folder in ipairs(folders) do
-            if folder then
-                for _, enemy in ipairs(folder:GetChildren()) do
-                    if enemy and not enemy:GetAttribute("Dead") then
-                        count = count + 1
-                        pcall(function()
-                            if Remote:FindFirstChild("Attack") and Remote.Attack:FindFirstChild("EnemyHitBE") then
-                                Remote.Attack.EnemyHitBE:Fire(enemy.Name, 1e30, {
-                                    Damage = 1e30,
-                                    SkillID = "K_ATK_1",
-                                    IsCrit = true
-                                })
-                            end
-                        end)
-                        pcall(function()
-                            if AttackRemote and AttackRemote:FindFirstChild("KillEnemyRE") then
-                                AttackRemote.KillEnemyRE:FireServer(enemy.Name)
-                            end
-                        end)
-                    end
-                end
-            end
-        end
-        local lang = State.Language or "TH"
-        Fluent:Notify({
-            Title = "Nuke Aura",
-            Content = (lang == "TH")
-                and string.format("ล้างบางมอนสเตอร์เรียบร้อย %d ตัว!", count)
-                or string.format("Obliterated %d enemy mob(s)!", count),
-            Duration = 2
-        })
-    end
-})
-UIElements.BtnNukeAllMobs = BtnNukeAllMobs
-
-local BtnVacuumOres = Tabs.Bypass:AddButton({
-    Title = "🧲 Instant Vacuum All World Ores",
-    Description = "Instantly collects all dropped ores across the entire game",
-    Callback = function()
-        CollectAllWorldOres()
-        local lang = State.Language or "TH"
-        Fluent:Notify({
-            Title = "Ore Magnet",
-            Content = (lang == "TH") and "ดูดแร่ทั่วทั้งแมพเรียบร้อย!" or "All map ores vacuumed!",
-            Duration = 2
-        })
-    end
-})
-UIElements.BtnVacuumOres = BtnVacuumOres
-
--- ========================================================================
--- TAB: FARM
--- ========================================================================
-local StatParagraph = Tabs.Farm:AddParagraph({
-    Title = "📊 Live Player Statistics",
-    Content = "Connecting to player data..."
-})
-UIElements.StatParagraph = StatParagraph
-
-local ToggleAutoTrain = Tabs.Farm:AddToggle("AutoTrain", {
-    Title = "⚡ Hyper Fast Auto Train",
-    Description = "Auto-warps directly to your highest unlocked train pad & trains at max multiplier",
-    Default = false
-})
-ToggleAutoTrain:OnChanged(function()
-    State.AutoTrain = Options.AutoTrain.Value
-    if State.AutoTrain then
-        task.spawn(WarpToBestTrainArea)
-    end
-    RequestAutoSave()
-end)
-UIElements.ToggleAutoTrain = ToggleAutoTrain
-
-local ToggleForce100xTrain = Tabs.Farm:AddToggle("Force100xTrain", {
-    Title = "👑 Force x100 Train (Free GamePass Bypass)",
-    Description = "Forces VIP 100x multiplier train pad without purchasing the GamePass",
-    Default = true
-})
-ToggleForce100xTrain:OnChanged(function()
-    State.Force100xTrain = Options.Force100xTrain.Value
-    if State.AutoTrain then
-        task.spawn(WarpToBestTrainArea)
-    end
-    RequestAutoSave()
-end)
-UIElements.ToggleForce100xTrain = ToggleForce100xTrain
-
-local ToggleAutoRebirth = Tabs.Farm:AddToggle("AutoRebirth", {
-    Title = "🔄 Auto Rebirth (Max Speed)",
-    Description = "Instantly performs Rebirth the moment level requirement is met",
-    Default = false
-})
-ToggleAutoRebirth:OnChanged(function()
-    State.AutoRebirth = Options.AutoRebirth.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleAutoRebirth = ToggleAutoRebirth
-
-local ToggleStage27Raid = Tabs.Farm:AddToggle("AutoStage27Raid", {
-    Title = "🚀 Auto Stage 27 Raid & Return Loop",
-    Description = "Warps to Stage 27, kills all mobs, collects drops, clicks Back, and waits 5s cooldown before next run",
-    Default = false
-})
-ToggleStage27Raid:OnChanged(function()
-    State.AutoStage27Raid = Options.AutoStage27Raid.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleStage27Raid = ToggleStage27Raid
-
-local BtnStage27Once = Tabs.Farm:AddButton({
-    Title = "⚡ Warp Stage 27 -> Kill -> Loot -> Return",
-    Description = "Run one full Stage 27 sweep cycle now",
-    Callback = function()
-        task.spawn(RunStage27Cycle)
-    end
-})
-UIElements.BtnStage27Once = BtnStage27Once
-
-local ToggleAutoCollectOres = Tabs.Farm:AddToggle("AutoCollectOres", {
-    Title = "🧲 Auto Collect Ores (Instant Magnet & Prompt)",
-    Description = "Automatically triggers proximity prompts and vacuums every ore across the map",
-    Default = false
-})
-ToggleAutoCollectOres:OnChanged(function()
-    State.AutoCollectOres = Options.AutoCollectOres.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleAutoCollectOres = ToggleAutoCollectOres
-
-local ToggleSmartPack = Tabs.Farm:AddToggle("AutoSmartFreePack", {
-    Title = "📦 Auto Free Pack (Craft 10 Ores When Full)",
-    Description = "Automatically crafts equipment using 10 ores whenever the 24-slot pack fills up",
-    Default = false
-})
-ToggleSmartPack:OnChanged(function()
-    State.AutoSmartFreePack = Options.AutoSmartFreePack.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleSmartPack = ToggleSmartPack
-
-local BtnCollectAllOres = Tabs.Farm:AddButton({
-    Title = "🧲 Instant Collect All Ground Ores",
-    Description = "Collects all dropped ores currently on the map",
-    Callback = function()
-        CollectAllWorldOres()
-    end
-})
-UIElements.BtnCollectAllOres = BtnCollectAllOres
-
-local BtnTeleportBestTrain = Tabs.Farm:AddButton({
-    Title = "📍 Teleport To Best Unlocked Train Area",
-    Description = "Instantly warps to your highest multiplier training dummy pad",
-    Callback = function()
-        local bestID = WarpToBestTrainArea()
-        local lang = State.Language or "TH"
-        local t = I18N[lang] or I18N.TH
-        Fluent:Notify({
-            Title = "Train Area",
-            Content = string.format(t.NotifyWarpTrain, tostring(bestID)),
-            Duration = 2
-        })
-    end
-})
-UIElements.BtnTeleportBestTrain = BtnTeleportBestTrain
-
-local BtnMaxUpgradePassives = Tabs.Farm:AddButton({
-    Title = "⭐ Max Upgrade Passives (Train / Luck / OrePack)",
-    Description = "Upgrades Train, Luck, and OrePack capacity to max level",
-    Callback = function()
-        for _, key in ipairs({"Train", "Luck", "OrePack"}) do
-            for i = 1, 15 do
-                UpgradeData.UpgradeOnce(key)
-            end
-        end
-        local lang = State.Language or "TH"
-        local t = I18N[lang] or I18N.TH
-        Fluent:Notify({
-            Title = "Upgrades",
-            Content = t.NotifyUpgraded,
-            Duration = 2
-        })
-    end
-})
-UIElements.BtnMaxUpgradePassives = BtnMaxUpgradePassives
-
--- ========================================================================
--- TAB: FORGE & INVENTORY
--- ========================================================================
-local ToggleAutoForge = Tabs.Forge:AddToggle("AutoForge", {
-    Title = "🔥 Auto Forge (Batches of 10 Ores)",
-    Description = "Continuously crafts items using 10 ores per batch",
-    Default = false
-})
-ToggleAutoForge:OnChanged(function()
-    State.AutoForge = Options.AutoForge.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleAutoForge = ToggleAutoForge
-
-local DropdownForgeType = Tabs.Forge:AddDropdown("ForgeType", {
-    Title = "Craft Target Type",
-    Values = {"Weapon", "Armor", "Hat"},
-    Multi = false,
-    Default = "Weapon"
-})
-DropdownForgeType:OnChanged(function(Value)
-    State.ForgeType = Value
-    RequestAutoSave()
-end)
-UIElements.DropdownForgeType = DropdownForgeType
-
-local ToggleAutoEquipBest = Tabs.Forge:AddToggle("AutoEquipBest", {
-    Title = "🛡️ Auto Equip Best Gear (Weapon / Armor / Hat)",
-    Description = "Automatically scans inventory and equips the highest stat equipment",
-    Default = false
-})
-ToggleAutoEquipBest:OnChanged(function()
-    State.AutoEquipBest = Options.AutoEquipBest.Value
-    if State.AutoEquipBest then
-        task.spawn(EquipBestEquipment)
-    end
-    RequestAutoSave()
-end)
-UIElements.ToggleAutoEquipBest = ToggleAutoEquipBest
-
-local BtnInstantEquipBest = Tabs.Forge:AddButton({
-    Title = "⚡ Instant Equip Best Gear",
-    Description = "Equips the strongest weapon, armor, and hat currently in your inventory",
-    Callback = function()
-        local changed, count = EquipBestEquipment()
-        local lang = State.Language or "TH"
-        local t = I18N[lang] or I18N.TH
-        Fluent:Notify({
-            Title = "Equip Best",
-            Content = changed and string.format(t.NotifyEquipped, count) or t.NotifyAlreadyBest,
-            Duration = 2
-        })
-    end
-})
-UIElements.BtnInstantEquipBest = BtnInstantEquipBest
-
-local BtnEquipAstralSet = Tabs.Forge:AddButton({
-    Title = "🌌 Spawn Astral Genesis Set (VIP Bypass)",
-    Description = "Attaches Astral Supernova Edge, Devourer Plate, and Sovereign Crown",
-    Callback = function()
-        State.AstralGenesisSet = true
-        if Options and Options.AstralGenesisSet then
-            pcall(function() Options.AstralGenesisSet:SetValue(true) end)
-        end
-        EquipAstralGenesisSet(true)
-        RequestAutoSave()
-    end
-})
-UIElements.BtnEquipAstralSet = BtnEquipAstralSet
-
-local ToggleAstralSet = Tabs.Forge:AddToggle("AstralGenesisSet", {
-    Title = "👑 Permanent Astral Genesis Set",
-    Description = "Keeps Astral Genesis gear models and effects equipped on character",
-    Default = true
-})
-ToggleAstralSet:OnChanged(function()
-    State.AstralGenesisSet = Options.AstralGenesisSet.Value
-    if State.AstralGenesisSet then
-        EquipAstralGenesisSet(false)
-    end
-    RequestAutoSave()
-end)
-UIElements.ToggleAstralSet = ToggleAstralSet
-
-local ToggleAutoSellAll = Tabs.Forge:AddToggle("AutoSellAll", {
-    Title = "💰 Auto Sell Non-Equipped Items",
-    Description = "Periodically sells extra crafted items for coins",
-    Default = false
-})
-ToggleAutoSellAll:OnChanged(function()
-    State.AutoSellAll = Options.AutoSellAll.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleAutoSellAll = ToggleAutoSellAll
-
-local BtnInstantMultiForge = Tabs.Forge:AddButton({
-    Title = "🔨 Instant Multi-Forge 5x",
-    Description = "Crafts 5 batches of equipment immediately",
-    Callback = function()
-        task.spawn(function()
-            for i = 1, 5 do
-                local data = BackpackData.GetData()
-                if not data or not data.have then break end
-                local oreList = {}
-                local total = 0
-                for uuid, item in pairs(data.have) do
-                    if item.Type == "Ore" and item.Number and item.Number > 0 then
-                        local take = math.min(item.Number, 10 - total)
-                        oreList[uuid] = take
-                        total = total + take
-                        if total >= 10 then break end
-                    end
-                end
-                if total >= 4 then
-                    ForgeRemote.ForgeRF:InvokeServer({
-                        ConfigType = State.ForgeType,
-                        UUIDList = oreList
-                    })
-                end
-                task.wait(0.15)
-            end
-            local lang = State.Language or "TH"
-            local t = I18N[lang] or I18N.TH
-            Fluent:Notify({
-                Title = "Forge",
-                Content = t.NotifyForged5x,
-                Duration = 2
-            })
-        end)
-    end
-})
-UIElements.BtnInstantMultiForge = BtnInstantMultiForge
-
-local BtnInstantSellAll = Tabs.Forge:AddButton({
-    Title = "🗑️ Instant Sell All Non-Equipped Items",
-    Description = "Sells all unequipped gear in backpack for coins",
-    Callback = function()
-        BackpackData.SellAll()
-        local lang = State.Language or "TH"
-        local t = I18N[lang] or I18N.TH
-        Fluent:Notify({
-            Title = "Sell",
-            Content = t.NotifySold,
-            Duration = 2
-        })
-    end
-})
-UIElements.BtnInstantSellAll = BtnInstantSellAll
-
--- ========================================================================
--- TAB: COMBAT & DUNGEON
+-- HELPER FUNCTIONS FOR COMBAT, DUNGEON, AND PETS
 -- ========================================================================
 local function RunInstantTower1To50Cycle()
     pcall(function()
@@ -2594,7 +2333,6 @@ local function RunInstantTower1To50Cycle()
         end)
         floorsCleared = floor
 
-        -- One-shot any spawned dungeon monsters with 1e30 damage
         local folders = {
             workspace:FindFirstChild("EnemyFolder"),
             workspace:FindFirstChild("EnemyFolder_Server")
@@ -2622,16 +2360,13 @@ local function RunInstantTower1To50Cycle()
         task.wait(0.03)
     end
 
-    -- Collect all reward ores dropped across the dungeon floor
     CollectAllWorldOres()
     task.wait(0.2)
 
-    -- Exit dungeon back to lobby/train
     pcall(function()
         DungeonData.ExitDungeon()
     end)
 
-    -- Teleport back & cleanup popups
     pcall(function()
         local info = LocalPlayer.PlayerGui:FindFirstChild("Info")
         if info then
@@ -2661,108 +2396,167 @@ local function RunInstantTower1To50Cycle()
     return true, floorsCleared, tick() - startTime
 end
 
-local ToggleDungeonSweep = Tabs.Combat:AddToggle("AutoDungeonSweep", {
-    Title = "🏰 Auto Tower 1-50 Instant Nuke",
-    Description = "Enters Frozen Tower and instantly completes all 50 floors in one pass without climbing floor by floor",
-    Default = false
-})
-ToggleDungeonSweep:OnChanged(function()
-    State.AutoDungeonSweep = Options.AutoDungeonSweep.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleDungeonSweep = ToggleDungeonSweep
+local function RunSeason2CoinsFarmBurst(targetRounds)
+    targetRounds = targetRounds or 60
+    local DS = DungeonRemote or (Remote and Remote:FindFirstChild("Dungeon_Server")) or (ReplicatedStorage:FindFirstChild("Remote") and ReplicatedStorage.Remote:FindFirstChild("Dungeon_Server"))
+    if not DS then return 0, 0 end
 
-local BtnInstantTower = Tabs.Combat:AddButton({
-    Title = "⚡ Instant Nuke Tower Floors 1-50 (1-Click)",
-    Description = "Instantly clears all 50 floors in seconds, wipes mobs with 1e30, and vacuums all rewards",
-    Callback = function()
+    pcall(function()
+        if DS:FindFirstChild("TryClaimDailyDunTicRE") then
+            DS.TryClaimDailyDunTicRE:FireServer()
+        end
+    end)
+    task.wait(0.1)
+
+    local entered = false
+    pcall(function()
+        if DS:FindFirstChild("TryIntoDungeonRF") then
+            entered = DS.TryIntoDungeonRF:InvokeServer(true, 50)
+        end
+    end)
+    if not entered then return 0, 0 end
+
+    local rounds = 0
+    local gainedCoins = 0
+    local done = false
+    local workers = 4
+    local completedWorkers = 0
+
+    for _ = 1, workers do
         task.spawn(function()
-            local ok, floors, dur = RunInstantTower1To50Cycle()
-            local lang = State.Language or "TH"
-            Fluent:Notify({
-                Title = "Frozen Tower",
-                Content = ok and string.format((lang == "TH" and "กวาดล้างหอคอยชั้น 1-%d สำเร็จใน %.1f วินาที!" or "Cleared Tower floors 1-%d in %.1f seconds!"), floors, dur)
-                             or (lang == "TH" and "ไม่สามารถเข้าหอคอยได้!" or "Could not enter Tower!"),
-                Duration = 3
-            })
+            while not done and rounds < targetRounds do
+                local ok, result = pcall(function()
+                    if DS:FindFirstChild("StartRoundRE") then
+                        DS.StartRoundRE:FireServer(50)
+                    end
+                    if DS:FindFirstChild("CompleteRoundRF") then
+                        return DS.CompleteRoundRF:InvokeServer(50)
+                    end
+                    return nil
+                end)
+                if not ok or type(result) ~= "table" then
+                    done = true
+                    break
+                end
+                rounds = rounds + 1
+                for _, item in ipairs(result) do
+                    if item.ID == "SeasonCoin" then
+                        gainedCoins = gainedCoins + (item.Number or 0)
+                    end
+                end
+            end
+            completedWorkers = completedWorkers + 1
         end)
     end
-})
-UIElements.BtnInstantTower = BtnInstantTower
 
-local BtnEnterFloor50 = Tabs.Combat:AddButton({
-    Title = "🚪 Warp & Enter Floor 50 Directly",
-    Description = "Enters top floor 50 of Frozen Tower directly",
-    Callback = function()
-        DungeonData.TryIntoDungeon(50)
+    local start = tick()
+    while not done and rounds < targetRounds and (tick() - start) < 25 do
+        task.wait(0.15)
+        if completedWorkers >= workers then break end
     end
-})
-UIElements.BtnEnterFloor50 = BtnEnterFloor50
+    done = true
 
-local BtnEnterDungeon = Tabs.Combat:AddButton({
-    Title = "🚪 Enter Tower Floor 1",
-    Callback = function()
-        DungeonData.TryIntoDungeon(1)
+    pcall(function()
+        local info = LocalPlayer.PlayerGui:FindFirstChild("Info")
+        if info then
+            if info:FindFirstChild("DungeonResult") then info.DungeonResult.Visible = false end
+            if info:FindFirstChild("RoundCompleted") then info.RoundCompleted.Visible = false end
+        end
+        local dGui = LocalPlayer.PlayerGui:FindFirstChild("Dungeon")
+        if dGui then dGui.Enabled = false end
+    end)
+
+    return rounds, gainedCoins
+end
+
+local SEASON_PET_MAP = {
+    Event1_1 = { Name = "Jack", Rarity = "Epic", Color = "🎃", Tier = 1 },
+    Event1_2 = { Name = "Hex", Rarity = "Legendary", Color = "🐱", Tier = 2 },
+    Event1_3 = { Name = "Vampire: Drake", Rarity = "Mythic", Color = "🦇", Tier = 3 },
+    Event1_4 = { Name = "Shadow: Fenrir", Rarity = "Eternal / Secret", Color = "🐺✨", Tier = 4 },
+}
+
+local function AutoEquipBestPet()
+    pcall(function()
+        local pd = ReplicatedStorage:FindFirstChild("ProfileData")
+        local pld = ReplicatedStorage:FindFirstChild("LocalData") and ReplicatedStorage.LocalData:FindFirstChild("PetData")
+        if not pd or not pld then return end
+        local ProfileData = require(pd)
+        local PetData = require(pld)
+        local petStore = ProfileData.GetStoreData and ProfileData.GetStoreData("Pet")
+        if not petStore or not petStore.have then return end
+
+        local bestUUID = nil
+        local bestTier = -1
+
+        for uuid, pet in pairs(petStore.have) do
+            local info = SEASON_PET_MAP[pet.ID]
+            local tier = info and info.Tier or 0
+            if tier > bestTier then
+                bestTier = tier
+                bestUUID = uuid
+            end
+        end
+
+        if bestUUID and petStore.equiped and petStore.equiped[1] ~= bestUUID then
+            local current = petStore.equiped[1]
+            local petRemote = ReplicatedStorage:FindFirstChild("Remote") and ReplicatedStorage.Remote:FindFirstChild("Pet_Server")
+            if petRemote and petRemote:FindFirstChild("IsEquipPetRE") then
+                if current then
+                    petRemote.IsEquipPetRE:FireServer(current, false)
+                    task.wait(0.1)
+                end
+                petRemote.IsEquipPetRE:FireServer(bestUUID, true)
+            else
+                PetData.EquipPet(bestUUID)
+            end
+        end
+    end)
+end
+
+local function RollPetLuckOnce()
+    local pd = ReplicatedStorage:FindFirstChild("ProfileData")
+    if not pd then return nil end
+    local ProfileData = require(pd)
+    local sStore = ProfileData.GetStoreData and ProfileData.GetStoreData("Season")
+    local coin = sStore and sStore.Season2 and sStore.Season2.SeasonCoin or 0
+    if coin < 400 then return nil end
+
+    local remote = ReplicatedStorage:FindFirstChild("Remote")
+        and ReplicatedStorage.Remote:FindFirstChild("Season_Server")
+        and ReplicatedStorage.Remote.Season_Server:FindFirstChild("LuckPetRF")
+    if not remote then return nil end
+
+    local petID = remote:InvokeServer()
+    if petID then
+        AutoEquipBestPet()
     end
-})
-UIElements.BtnEnterDungeon = BtnEnterDungeon
+    return petID
+end
 
-local BtnExitDungeon = Tabs.Combat:AddButton({
-    Title = "🏃 Exit Tower / Dungeon",
-    Callback = function()
-        DungeonData.ExitDungeon()
+local function RunPetLuckBurst(count)
+    count = count or 10
+    local rolledCount = 0
+    local stats = {}
+
+    for i = 1, count do
+        local petID = RollPetLuckOnce()
+        if not petID then break end
+        rolledCount = rolledCount + 1
+        stats[petID] = (stats[petID] or 0) + 1
+        task.wait(0.08)
     end
-})
-UIElements.BtnExitDungeon = BtnExitDungeon
 
-local ToggleKillSuperLoot = Tabs.Combat:AddToggle("AutoKillSuperLoot", {
-    Title = "🎯 Auto Kill Mobs & SuperLoot",
-    Description = "Insta-kills any monsters and SuperLoot entities that spawn in the map",
-    Default = false
-})
-ToggleKillSuperLoot:OnChanged(function()
-    State.AutoKillSuperLoot = Options.AutoKillSuperLoot.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleKillSuperLoot = ToggleKillSuperLoot
-
-local ToggleSkills = Tabs.Combat:AddToggle("AutoSkills", {
-    Title = "💥 Auto Spam Weapon Skills",
-    Description = "Fires weapon skills constantly",
-    Default = false
-})
-ToggleSkills:OnChanged(function()
-    State.AutoSkills = Options.AutoSkills.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleSkills = ToggleSkills
-
-local BtnCastAstralSkill = Tabs.Combat:AddButton({
-    Title = "🌌 Cast Astral Burst Domain (1100% AoE)",
-    Description = "Unleashes the cosmic dragon domain dealing continuous 1100% damage",
-    Callback = function()
-        CastAstralBurstDomain()
-        local lang = State.Language or "TH"
-        local t = I18N[lang] or I18N.TH
-        Fluent:Notify({
-            Title = "Astral Burst",
-            Content = t.NotifyAstralSkill or "Astral Burst Domain activated!",
-            Duration = 2
-        })
+    local parts = {}
+    for petID, num in pairs(stats) do
+        local info = SEASON_PET_MAP[petID]
+        local name = info and info.Name or petID
+        local icon = info and info.Color or "🐾"
+        table.insert(parts, string.format("%s %s x%d", icon, name, num))
     end
-})
-UIElements.BtnCastAstralSkill = BtnCastAstralSkill
 
-local ToggleAstralSkill = Tabs.Combat:AddToggle("AutoAstralSkill", {
-    Title = "🌌 Auto Cast Astral Burst Domain",
-    Description = "Continuously activates Astral Burst Domain during combat",
-    Default = false
-})
-ToggleAstralSkill:OnChanged(function()
-    State.AutoAstralSkill = Options.AutoAstralSkill.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleAstralSkill = ToggleAstralSkill
+    return rolledCount, table.concat(parts, ", ")
+end
 
 local function JoinWorldBossFight()
     pcall(function()
@@ -2807,16 +2601,668 @@ local function ExitWorldBossFight()
     end)
 end
 
-Tabs.Combat:AddSection("👹 World Boss")
+-- ========================================================================
+-- TAB 1: BYPASS (CORE BYPASSES, MOVEMENT, AND ACTIONS)
+-- ========================================================================
+local BypassParagraph = Tabs.Bypass:AddParagraph({
+    Title = "Master Bypass Engine",
+    Content = "Unlocks all VIP GamePasses, Instant 1e30 Kill Aura, Immortal God Mode, and Extreme Stat Multipliers."
+})
+UIElements.BypassParagraph = BypassParagraph
+
+UIElements.SecBypassCore = Tabs.Bypass:AddSection("Core Bypasses")
+
+local ToggleUnlockAllGamePasses = Tabs.Bypass:AddToggle("UnlockAllGamePasses", {
+    Title = "Unlock All GamePasses & VIP",
+    Description = "Grants VIP, SuperLuck, UltraLuck, CommonLuck, MoreOre, SkipForge, AutoCollectOre, 2xDamage, SeasonVIP, and VIP Train Areas 9-11 without Robux",
+    Default = true
+})
+ToggleUnlockAllGamePasses:OnChanged(function()
+    State.UnlockAllGamePasses = Options.UnlockAllGamePasses.Value
+    if State.UnlockAllGamePasses then
+        task.spawn(ApplyGamePassAndVIPBypass)
+    end
+    RequestAutoSave()
+end)
+UIElements.ToggleUnlockAllGamePasses = ToggleUnlockAllGamePasses
+
+local ToggleOmniKillAura = Tabs.Bypass:AddToggle("OmniKillAura", {
+    Title = "Omni-Kill Aura (1e30 Damage)",
+    Description = "Instantly eliminates all enemies across the entire map using 1e30 damage and server execution events",
+    Default = true
+})
+ToggleOmniKillAura:OnChanged(function()
+    State.OmniKillAura = Options.OmniKillAura.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleOmniKillAura = ToggleOmniKillAura
+
+local ToggleGodMode = Tabs.Bypass:AddToggle("GodMode", {
+    Title = "God Mode (Immortal)",
+    Description = "Completely zeroes out all incoming damage; keeps health at 100% permanently",
+    Default = true
+})
+ToggleGodMode:OnChanged(function()
+    State.GodMode = Options.GodMode.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleGodMode = ToggleGodMode
+
+local ToggleInsaneStatBoost = Tabs.Bypass:AddToggle("InsaneStatBoost", {
+    Title = "Extreme Stat Multiplier (+5000%)",
+    Description = "Hooks game balance formulas for massive Luck, Damage, Coins, and Ore drop rates",
+    Default = true
+})
+ToggleInsaneStatBoost:OnChanged(function()
+    State.InsaneStatBoost = Options.InsaneStatBoost.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleInsaneStatBoost = ToggleInsaneStatBoost
+
+UIElements.SecBypassMovement = Tabs.Bypass:AddSection("Movement & Visuals")
+
+local ToggleSpeedHack = Tabs.Bypass:AddToggle("SpeedHack", {
+    Title = "WalkSpeed Boost",
+    Description = "Overrides player movement speed (16 - 150)",
+    Default = false
+})
+ToggleSpeedHack:OnChanged(function()
+    State.SpeedHack = Options.SpeedHack.Value
+    if not State.SpeedHack then
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.WalkSpeed = 16 end
+    end
+    RequestAutoSave()
+end)
+UIElements.ToggleSpeedHack = ToggleSpeedHack
+
+local SliderWalkSpeed = Tabs.Bypass:AddSlider("WalkSpeedValue", {
+    Title = "Custom WalkSpeed",
+    Default = 48,
+    Min = 16,
+    Max = 150,
+    Rounding = 0,
+})
+SliderWalkSpeed:OnChanged(function(val)
+    State.WalkSpeedValue = val
+    RequestAutoSave()
+end)
+UIElements.SliderWalkSpeed = SliderWalkSpeed
+
+local ToggleJumpPowerHack = Tabs.Bypass:AddToggle("JumpPowerHack", {
+    Title = "JumpPower Boost",
+    Description = "Overrides player jump height (50 - 200)",
+    Default = false
+})
+ToggleJumpPowerHack:OnChanged(function()
+    State.JumpPowerHack = Options.JumpPowerHack.Value
+    if not State.JumpPowerHack then
+        local char = LocalPlayer.Character
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+        if hum then hum.JumpPower = 50 end
+    end
+    RequestAutoSave()
+end)
+UIElements.ToggleJumpPowerHack = ToggleJumpPowerHack
+
+local SliderJumpPower = Tabs.Bypass:AddSlider("JumpPowerValue", {
+    Title = "Custom JumpPower",
+    Default = 80,
+    Min = 50,
+    Max = 200,
+    Rounding = 0,
+})
+SliderJumpPower:OnChanged(function(val)
+    State.JumpPowerValue = val
+    RequestAutoSave()
+end)
+UIElements.SliderJumpPower = SliderJumpPower
+
+local ToggleNoclip = Tabs.Bypass:AddToggle("Noclip", {
+    Title = "Noclip (Walk Through Walls)",
+    Description = "Disables collision on character parts, allowing you to walk through walls and gates",
+    Default = false
+})
+ToggleNoclip:OnChanged(function()
+    State.Noclip = Options.Noclip.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleNoclip = ToggleNoclip
+
+local ToggleInfiniteJump = Tabs.Bypass:AddToggle("InfiniteJump", {
+    Title = "Infinite Jump",
+    Description = "Allows jumping repeatedly in mid-air without landing",
+    Default = false
+})
+ToggleInfiniteJump:OnChanged(function()
+    State.InfiniteJump = Options.InfiniteJump.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleInfiniteJump = ToggleInfiniteJump
+
+local ToggleDisableBlur = Tabs.Bypass:AddToggle("DisableBlur", {
+    Title = "Disable Blur & Depth of Field",
+    Description = "Permanently removes TrainDOF, Blur, and Depth of Field for a crystal clear view",
+    Default = true
+})
+ToggleDisableBlur:OnChanged(function()
+    State.DisableBlur = Options.DisableBlur.Value
+    if State.DisableBlur then
+        RemoveAllBlurs()
+    end
+    RequestAutoSave()
+end)
+UIElements.ToggleDisableBlur = ToggleDisableBlur
+
+UIElements.SecBypassActions = Tabs.Bypass:AddSection("Instant Actions")
+
+local BtnNukeAllMobs = Tabs.Bypass:AddButton({
+    Title = "Nuke All Map Enemies Now",
+    Description = "Sends 1e30 damage to every monster currently present in workspace",
+    Callback = function()
+        local count = 0
+        local folders = {
+            workspace:FindFirstChild("EnemyFolder"),
+            workspace:FindFirstChild("EnemyFolder_Server")
+        }
+        for _, folder in ipairs(folders) do
+            if folder then
+                for _, enemy in ipairs(folder:GetChildren()) do
+                    if enemy and not enemy:GetAttribute("Dead") then
+                        count = count + 1
+                        pcall(function()
+                            if Remote:FindFirstChild("Attack") and Remote.Attack:FindFirstChild("EnemyHitBE") then
+                                Remote.Attack.EnemyHitBE:Fire(enemy.Name, 1e30, {
+                                    Damage = 1e30,
+                                    SkillID = "K_ATK_1",
+                                    IsCrit = true
+                                })
+                            end
+                        end)
+                        pcall(function()
+                            if AttackRemote and AttackRemote:FindFirstChild("KillEnemyRE") then
+                                AttackRemote.KillEnemyRE:FireServer(enemy.Name)
+                            end
+                        end)
+                    end
+                end
+            end
+        end
+        local lang = State.Language or "TH"
+        Fluent:Notify({
+            Title = "Nuke Aura",
+            Content = (lang == "TH")
+                and string.format("ล้างบางมอนสเตอร์เรียบร้อย %d ตัว!", count)
+                or string.format("Obliterated %d enemy mob(s)!", count),
+            Duration = 2
+        })
+    end
+})
+UIElements.BtnNukeAllMobs = BtnNukeAllMobs
+
+local BtnVacuumOres = Tabs.Bypass:AddButton({
+    Title = "Vacuum All World Ores",
+    Description = "Instantly collects all dropped ores across the entire game",
+    Callback = function()
+        CollectAllWorldOres()
+        local lang = State.Language or "TH"
+        Fluent:Notify({
+            Title = "Ore Magnet",
+            Content = (lang == "TH") and "ดูดแร่ทั่วทั้งแมพเรียบร้อย!" or "All map ores vacuumed!",
+            Duration = 2
+        })
+    end
+})
+UIElements.BtnVacuumOres = BtnVacuumOres
+
+-- ========================================================================
+-- TAB 2: FARM (TRAINING, SEASON 2, ORES, AND RAIDS)
+-- ========================================================================
+UIElements.SecFarmStats = Tabs.Farm:AddSection("Live Dashboard")
+
+local StatParagraph = Tabs.Farm:AddParagraph({
+    Title = "Live Player Statistics",
+    Content = "Connecting to player data..."
+})
+UIElements.StatParagraph = StatParagraph
+
+UIElements.SecFarmTrain = Tabs.Farm:AddSection("Training & Rebirth")
+
+local ToggleAutoTrain = Tabs.Farm:AddToggle("AutoTrain", {
+    Title = "Auto Train (Highest Area)",
+    Description = "Auto-warps directly to your highest unlocked train pad & trains at max multiplier",
+    Default = false
+})
+ToggleAutoTrain:OnChanged(function()
+    State.AutoTrain = Options.AutoTrain.Value
+    if State.AutoTrain then
+        task.spawn(WarpToBestTrainArea)
+    end
+    RequestAutoSave()
+end)
+UIElements.ToggleAutoTrain = ToggleAutoTrain
+
+local ToggleForce100xTrain = Tabs.Farm:AddToggle("Force100xTrain", {
+    Title = "Force 100x Train Pad (VIP)",
+    Description = "Forces VIP 100x multiplier train pad without purchasing the GamePass",
+    Default = true
+})
+ToggleForce100xTrain:OnChanged(function()
+    State.Force100xTrain = Options.Force100xTrain.Value
+    if State.AutoTrain then
+        task.spawn(WarpToBestTrainArea)
+    end
+    RequestAutoSave()
+end)
+UIElements.ToggleForce100xTrain = ToggleForce100xTrain
+
+local ToggleAutoRebirth = Tabs.Farm:AddToggle("AutoRebirth", {
+    Title = "Auto Rebirth (Max Speed)",
+    Description = "Instantly performs Rebirth the moment level requirement is met",
+    Default = false
+})
+ToggleAutoRebirth:OnChanged(function()
+    State.AutoRebirth = Options.AutoRebirth.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleAutoRebirth = ToggleAutoRebirth
+
+local BtnTeleportBestTrain = Tabs.Farm:AddButton({
+    Title = "Warp to Best Train Area",
+    Description = "Instantly warps to your highest multiplier training dummy pad",
+    Callback = function()
+        local bestID = WarpToBestTrainArea()
+        local lang = State.Language or "TH"
+        local t = I18N[lang] or I18N.TH
+        Fluent:Notify({
+            Title = "Train Area",
+            Content = string.format(t.NotifyWarpTrain, tostring(bestID)),
+            Duration = 2
+        })
+    end
+})
+UIElements.BtnTeleportBestTrain = BtnTeleportBestTrain
+
+local BtnMaxUpgradePassives = Tabs.Farm:AddButton({
+    Title = "Max Upgrade Passives",
+    Description = "Upgrades Train, Luck, and OrePack capacity to max level",
+    Callback = function()
+        for _, key in ipairs({"Train", "Luck", "OrePack"}) do
+            for i = 1, 15 do
+                UpgradeData.UpgradeOnce(key)
+            end
+        end
+        local lang = State.Language or "TH"
+        local t = I18N[lang] or I18N.TH
+        Fluent:Notify({
+            Title = "Upgrades",
+            Content = t.NotifyUpgraded,
+            Duration = 2
+        })
+    end
+})
+UIElements.BtnMaxUpgradePassives = BtnMaxUpgradePassives
+
+UIElements.SecFarmSeason = Tabs.Farm:AddSection("Season 2 & Pets")
+
+local ToggleAutoFarmSeason2Coins = Tabs.Farm:AddToggle("AutoFarmSeason2Coins", {
+    Title = "Auto Farm SS2 Coins (Tower 50)",
+    Description = "Spams Dungeon Floor 50 completions to rapidly farm massive Season 2 Coins, Ores & Enchant Stones",
+    Default = false
+})
+ToggleAutoFarmSeason2Coins:OnChanged(function()
+    State.AutoFarmSeason2Coins = Options.AutoFarmSeason2Coins.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleAutoFarmSeason2Coins = ToggleAutoFarmSeason2Coins
+
+local BtnInstantFarmSS2Coins = Tabs.Farm:AddButton({
+    Title = "Instant Farm 100x SS2 Coins",
+    Description = "Runs a 100-round burst of Dungeon Floor 50 immediately",
+    Callback = function()
+        task.spawn(function()
+            local lang = State.Language or "TH"
+            local t = I18N[lang] or I18N.TH
+            Fluent:Notify({
+                Title = "Season 2 Farm",
+                Content = (lang == "TH" and "กำลังเริ่มปั้มเหรียญ SS2 100 รอบ..." or "Starting 100-round SS2 coin farm burst..."),
+                Duration = 2
+            })
+            local rounds, coins = RunSeason2CoinsFarmBurst(100)
+            Fluent:Notify({
+                Title = "Season 2 Farm",
+                Content = string.format(t.NotifySS2Farmed or "Farmed %d rounds (+%s SS2 Coins)!", rounds, AbbNumber.AbbreviateNumber(coins)),
+                Duration = 3
+            })
+        end)
+    end
+})
+UIElements.BtnInstantFarmSS2Coins = BtnInstantFarmSS2Coins
+
+local ToggleAutoPetLuck = Tabs.Farm:AddToggle("AutoPetLuck", {
+    Title = "Auto Roll Pet Luck",
+    Description = "Automatically rolls Season 2 Pet Luck when having >= 400 SS2 Coins (bypasses roll animations)",
+    Default = false
+})
+ToggleAutoPetLuck:OnChanged(function()
+    State.AutoPetLuck = Options.AutoPetLuck.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleAutoPetLuck = ToggleAutoPetLuck
+
+local BtnRollPetLuck10x = Tabs.Farm:AddButton({
+    Title = "Instant Roll Pet Luck (10x)",
+    Description = "Draws 10 Season 2 Pets instantly using 4,000 SS2 Coins",
+    Callback = function()
+        task.spawn(function()
+            local lang = State.Language or "TH"
+            local t = I18N[lang] or I18N.TH
+            Fluent:Notify({
+                Title = "Pet Luck",
+                Content = (lang == "TH" and "กำลังเริ่มสุ่ม Pet Luck 10 ครั้ง..." or "Rolling Pet Luck 10 times..."),
+                Duration = 2
+            })
+            local rolledCount, rolledSummary = RunPetLuckBurst(10)
+            if rolledCount > 0 then
+                Fluent:Notify({
+                    Title = "Pet Luck",
+                    Content = string.format(t.NotifyPetLuckBurst or "Rolled %d pets!", rolledCount) .. (rolledSummary ~= "" and ("\n" .. rolledSummary) or ""),
+                    Duration = 3
+                })
+            else
+                Fluent:Notify({
+                    Title = "Pet Luck",
+                    Content = t.NotifyNotEnoughCoins or "Not enough SS2 Coins!",
+                    Duration = 3
+                })
+            end
+        end)
+    end
+})
+UIElements.BtnRollPetLuck10x = BtnRollPetLuck10x
+
+UIElements.SecFarmOres = Tabs.Farm:AddSection("Ores & Inventory")
+
+local ToggleAutoCollectOres = Tabs.Farm:AddToggle("AutoCollectOres", {
+    Title = "Auto Collect Ores",
+    Description = "Automatically triggers proximity prompts and vacuums every ore across the map",
+    Default = false
+})
+ToggleAutoCollectOres:OnChanged(function()
+    State.AutoCollectOres = Options.AutoCollectOres.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleAutoCollectOres = ToggleAutoCollectOres
+
+local ToggleSmartPack = Tabs.Farm:AddToggle("AutoSmartFreePack", {
+    Title = "Auto Forge 10 Ores When Full",
+    Description = "Automatically crafts equipment using 10 ores whenever the 24-slot pack fills up",
+    Default = false
+})
+ToggleSmartPack:OnChanged(function()
+    State.AutoSmartFreePack = Options.AutoSmartFreePack.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleSmartPack = ToggleSmartPack
+
+local BtnCollectAllOres = Tabs.Farm:AddButton({
+    Title = "Collect All Ground Ores",
+    Description = "Collects all dropped ores currently on the map",
+    Callback = function()
+        CollectAllWorldOres()
+    end
+})
+UIElements.BtnCollectAllOres = BtnCollectAllOres
+
+UIElements.SecFarmRaid = Tabs.Farm:AddSection("Stage 27 Raid")
+
+local ToggleStage27Raid = Tabs.Farm:AddToggle("AutoStage27Raid", {
+    Title = "Auto Stage 27 Raid Loop",
+    Description = "Warps to Stage 27, kills all mobs, collects drops, clicks Back, and waits 5s cooldown",
+    Default = false
+})
+ToggleStage27Raid:OnChanged(function()
+    State.AutoStage27Raid = Options.AutoStage27Raid.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleStage27Raid = ToggleStage27Raid
+
+local BtnStage27Once = Tabs.Farm:AddButton({
+    Title = "Run Stage 27 Sweep Once",
+    Description = "Run one full Stage 27 sweep cycle now",
+    Callback = function()
+        task.spawn(RunStage27Cycle)
+    end
+})
+UIElements.BtnStage27Once = BtnStage27Once
+
+-- ========================================================================
+-- TAB 3: FORGE (CRAFTING, GEAR MANAGEMENT, AND ASTRAL SET)
+-- ========================================================================
+UIElements.SecForgeCraft = Tabs.Forge:AddSection("Auto Crafting")
+
+local ToggleAutoForge = Tabs.Forge:AddToggle("AutoForge", {
+    Title = "Auto Forge (10 Ores)",
+    Description = "Continuously crafts items using 10 ores per batch",
+    Default = false
+})
+ToggleAutoForge:OnChanged(function()
+    State.AutoForge = Options.AutoForge.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleAutoForge = ToggleAutoForge
+
+local DropdownForgeType = Tabs.Forge:AddDropdown("ForgeType", {
+    Title = "Craft Target Type",
+    Values = {"Weapon", "Armor", "Hat"},
+    Multi = false,
+    Default = "Weapon"
+})
+DropdownForgeType:OnChanged(function(Value)
+    State.ForgeType = Value
+    RequestAutoSave()
+end)
+UIElements.DropdownForgeType = DropdownForgeType
+
+local BtnInstantMultiForge = Tabs.Forge:AddButton({
+    Title = "Instant Forge 5 Batches",
+    Description = "Crafts 5 batches of equipment immediately",
+    Callback = function()
+        task.spawn(function()
+            for i = 1, 5 do
+                local data = BackpackData.GetData()
+                if not data or not data.have then break end
+                local oreList = {}
+                local total = 0
+                for uuid, item in pairs(data.have) do
+                    if item.Type == "Ore" and item.Number and item.Number > 0 then
+                        local take = math.min(item.Number, 10 - total)
+                        oreList[uuid] = take
+                        total = total + take
+                        if total >= 10 then break end
+                    end
+                end
+                if total >= 4 then
+                    ForgeRemote.ForgeRF:InvokeServer({
+                        ConfigType = State.ForgeType,
+                        UUIDList = oreList
+                    })
+                end
+                task.wait(0.15)
+            end
+            local lang = State.Language or "TH"
+            local t = I18N[lang] or I18N.TH
+            Fluent:Notify({
+                Title = "Forge",
+                Content = t.NotifyForged5x,
+                Duration = 2
+            })
+        end)
+    end
+})
+UIElements.BtnInstantMultiForge = BtnInstantMultiForge
+
+UIElements.SecForgeGear = Tabs.Forge:AddSection("Gear Management")
+
+local ToggleAutoEquipBest = Tabs.Forge:AddToggle("AutoEquipBest", {
+    Title = "Auto Equip Best Gear",
+    Description = "Automatically scans inventory and equips the highest stat equipment",
+    Default = false
+})
+ToggleAutoEquipBest:OnChanged(function()
+    State.AutoEquipBest = Options.AutoEquipBest.Value
+    if State.AutoEquipBest then
+        task.spawn(EquipBestEquipment)
+    end
+    RequestAutoSave()
+end)
+UIElements.ToggleAutoEquipBest = ToggleAutoEquipBest
+
+local BtnInstantEquipBest = Tabs.Forge:AddButton({
+    Title = "Instant Equip Best Gear",
+    Description = "Equips the strongest weapon, armor, and hat currently in your inventory",
+    Callback = function()
+        local changed, count = EquipBestEquipment()
+        local lang = State.Language or "TH"
+        local t = I18N[lang] or I18N.TH
+        Fluent:Notify({
+            Title = "Equip Best",
+            Content = changed and string.format(t.NotifyEquipped, count) or t.NotifyAlreadyBest,
+            Duration = 2
+        })
+    end
+})
+UIElements.BtnInstantEquipBest = BtnInstantEquipBest
+
+local ToggleAutoSellAll = Tabs.Forge:AddToggle("AutoSellAll", {
+    Title = "Auto Sell Non-Equipped Items",
+    Description = "Periodically sells extra crafted items for coins",
+    Default = false
+})
+ToggleAutoSellAll:OnChanged(function()
+    State.AutoSellAll = Options.AutoSellAll.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleAutoSellAll = ToggleAutoSellAll
+
+local BtnInstantSellAll = Tabs.Forge:AddButton({
+    Title = "Instant Sell All Non-Equipped",
+    Description = "Sells all unequipped gear in backpack for coins",
+    Callback = function()
+        BackpackData.SellAll()
+        local lang = State.Language or "TH"
+        local t = I18N[lang] or I18N.TH
+        Fluent:Notify({
+            Title = "Sell",
+            Content = t.NotifySold,
+            Duration = 2
+        })
+    end
+})
+UIElements.BtnInstantSellAll = BtnInstantSellAll
+
+UIElements.SecForgeAstral = Tabs.Forge:AddSection("Astral Genesis VIP Set")
+
+local ToggleAstralSet = Tabs.Forge:AddToggle("AstralGenesisSet", {
+    Title = "Permanent Astral Genesis Set",
+    Description = "Keeps Astral Genesis gear models and effects equipped on character",
+    Default = true
+})
+ToggleAstralSet:OnChanged(function()
+    State.AstralGenesisSet = Options.AstralGenesisSet.Value
+    if State.AstralGenesisSet then
+        task.spawn(function()
+            EquipAstralGenesisSet(false)
+        end)
+    end
+    RequestAutoSave()
+end)
+UIElements.ToggleAstralSet = ToggleAstralSet
+
+local BtnEquipAstralSet = Tabs.Forge:AddButton({
+    Title = "Spawn Astral Genesis Set Now",
+    Description = "Attaches Astral Supernova Edge, Devourer Plate, and Sovereign Crown",
+    Callback = function()
+        State.AstralGenesisSet = true
+        if Options and Options.AstralGenesisSet then
+            pcall(function() Options.AstralGenesisSet:SetValue(true) end)
+        end
+        EquipAstralGenesisSet(true)
+        RequestAutoSave()
+    end
+})
+UIElements.BtnEquipAstralSet = BtnEquipAstralSet
+
+-- ========================================================================
+-- TAB 4: COMBAT (TOWER 1-50, WORLD BOSS, AND SKILLS)
+-- ========================================================================
+UIElements.SecCombatTower = Tabs.Combat:AddSection("Frozen Tower (Floor 1-50)")
+
+local ToggleDungeonSweep = Tabs.Combat:AddToggle("AutoDungeonSweep", {
+    Title = "Auto Clear Tower Floors 1-50",
+    Description = "Enters Frozen Tower and instantly completes all 50 floors in one pass without climbing floor by floor",
+    Default = false
+})
+ToggleDungeonSweep:OnChanged(function()
+    State.AutoDungeonSweep = Options.AutoDungeonSweep.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleDungeonSweep = ToggleDungeonSweep
+
+local BtnInstantTower = Tabs.Combat:AddButton({
+    Title = "Instant Clear Tower 1-50 (1-Click)",
+    Description = "Instantly clears all 50 floors in seconds, wipes mobs with 1e30, and vacuums all rewards",
+    Callback = function()
+        task.spawn(function()
+            local ok, floors, dur = RunInstantTower1To50Cycle()
+            local lang = State.Language or "TH"
+            Fluent:Notify({
+                Title = "Frozen Tower",
+                Content = ok and string.format((lang == "TH" and "กวาดล้างหอคอยชั้น 1-%d สำเร็จใน %.1f วินาที!" or "Cleared Tower floors 1-%d in %.1f seconds!"), floors, dur)
+                             or (lang == "TH" and "ไม่สามารถเข้าหอคอยได้!" or "Could not enter Tower!"),
+                Duration = 3
+            })
+        end)
+    end
+})
+UIElements.BtnInstantTower = BtnInstantTower
+
+local BtnEnterFloor50 = Tabs.Combat:AddButton({
+    Title = "Enter Tower Floor 50 Directly",
+    Description = "Enters top floor 50 of Frozen Tower directly",
+    Callback = function()
+        DungeonData.TryIntoDungeon(50)
+    end
+})
+UIElements.BtnEnterFloor50 = BtnEnterFloor50
+
+local BtnEnterDungeon = Tabs.Combat:AddButton({
+    Title = "Enter Tower Floor 1",
+    Callback = function()
+        DungeonData.TryIntoDungeon(1)
+    end
+})
+UIElements.BtnEnterDungeon = BtnEnterDungeon
+
+local BtnExitDungeon = Tabs.Combat:AddButton({
+    Title = "Exit Tower / Dungeon",
+    Callback = function()
+        DungeonData.ExitDungeon()
+    end
+})
+UIElements.BtnExitDungeon = BtnExitDungeon
+
+UIElements.SecCombatBoss = Tabs.Combat:AddSection("World Boss")
 
 local WorldBossParagraph = Tabs.Combat:AddParagraph({
-    Title = "👹 World Boss Status",
+    Title = "World Boss Status",
     Content = "Connecting to World Boss timer..."
 })
 UIElements.WorldBossParagraph = WorldBossParagraph
 
 local ToggleAutoWorldBoss = Tabs.Combat:AddToggle("AutoWorldBoss", {
-    Title = "👹 Auto World Boss (One-Shot 1e30 & Auto Claim)",
+    Title = "Auto World Boss (One-Shot & Claim)",
     Description = "Automatically joins arena when World Boss spawns, one-shots with 1e30 damage, claims card reward, and returns",
     Default = false
 })
@@ -2827,7 +3273,7 @@ end)
 UIElements.ToggleAutoWorldBoss = ToggleAutoWorldBoss
 
 local BtnJoinWorldBoss = Tabs.Combat:AddButton({
-    Title = "🚪 Force Join World Boss Arena",
+    Title = "Join World Boss Arena",
     Description = "Teleports to World Boss arena and registers fight now",
     Callback = function()
         JoinWorldBossFight()
@@ -2836,7 +3282,7 @@ local BtnJoinWorldBoss = Tabs.Combat:AddButton({
 UIElements.BtnJoinWorldBoss = BtnJoinWorldBoss
 
 local BtnExitWorldBoss = Tabs.Combat:AddButton({
-    Title = "🏃 Force Exit World Boss Arena",
+    Title = "Exit World Boss Arena",
     Description = "Leaves World Boss arena and teleports back to spawn",
     Callback = function()
         ExitWorldBossFight()
@@ -2844,12 +3290,65 @@ local BtnExitWorldBoss = Tabs.Combat:AddButton({
 })
 UIElements.BtnExitWorldBoss = BtnExitWorldBoss
 
+UIElements.SecCombatSkills = Tabs.Combat:AddSection("Skills & Combat")
+
+local ToggleSkills = Tabs.Combat:AddToggle("AutoSkills", {
+    Title = "Auto Spam Weapon Skills",
+    Description = "Fires weapon skills constantly",
+    Default = false
+})
+ToggleSkills:OnChanged(function()
+    State.AutoSkills = Options.AutoSkills.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleSkills = ToggleSkills
+
+local ToggleAstralSkill = Tabs.Combat:AddToggle("AutoAstralSkill", {
+    Title = "Auto Cast Astral Burst Domain",
+    Description = "Continuously activates Astral Burst Domain during combat",
+    Default = false
+})
+ToggleAstralSkill:OnChanged(function()
+    State.AutoAstralSkill = Options.AutoAstralSkill.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleAstralSkill = ToggleAstralSkill
+
+local BtnCastAstralSkill = Tabs.Combat:AddButton({
+    Title = "Cast Astral Burst Domain Now",
+    Description = "Unleashes the cosmic dragon domain dealing continuous 1100% damage",
+    Callback = function()
+        CastAstralBurstDomain()
+        local lang = State.Language or "TH"
+        local t = I18N[lang] or I18N.TH
+        Fluent:Notify({
+            Title = "Astral Burst",
+            Content = t.NotifyAstralSkill or "Astral Burst Domain activated!",
+            Duration = 2
+        })
+    end
+})
+UIElements.BtnCastAstralSkill = BtnCastAstralSkill
+
+local ToggleKillSuperLoot = Tabs.Combat:AddToggle("AutoKillSuperLoot", {
+    Title = "Auto Kill Mobs & SuperLoot",
+    Description = "Insta-kills any monsters and SuperLoot entities that spawn in the map",
+    Default = false
+})
+ToggleKillSuperLoot:OnChanged(function()
+    State.AutoKillSuperLoot = Options.AutoKillSuperLoot.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleKillSuperLoot = ToggleKillSuperLoot
+
 -- ========================================================================
--- TAB: REWARDS & CLAIM
+-- TAB 5: REWARDS (AUTOMATED AND INSTANT CLAIMS)
 -- ========================================================================
+UIElements.SecRewardsAuto = Tabs.Rewards:AddSection("Automated Claims")
+
 local ToggleAutoClaimAll = Tabs.Rewards:AddToggle("AutoClaimAll", {
-    Title = "🎁 Auto Claim All Rewards",
-    Description = "Continuously claims online gifts, daily tickets, group gifts, and index rewards",
+    Title = "Auto Claim Daily & Online Gifts",
+    Description = "Continuously claims online gift rewards and index level-ups",
     Default = false
 })
 ToggleAutoClaimAll:OnChanged(function()
@@ -2859,8 +3358,8 @@ end)
 UIElements.ToggleAutoClaimAll = ToggleAutoClaimAll
 
 local ToggleAutoClaimIndex = Tabs.Rewards:AddToggle("AutoClaimIndex", {
-    Title = "📖 Auto Claim Index (Exp & Level)",
-    Description = "Automatically claims newly discovered weapons, armors, hats, ores, and title level rewards in Index",
+    Title = "Auto Claim Index Exp & Level",
+    Description = "Continuously scans unlocked Weapon, Armor, Hat, and Ore index entries for Exp & Level rewards",
     Default = false
 })
 ToggleAutoClaimIndex:OnChanged(function()
@@ -2869,9 +3368,11 @@ ToggleAutoClaimIndex:OnChanged(function()
 end)
 UIElements.ToggleAutoClaimIndex = ToggleAutoClaimIndex
 
+UIElements.SecRewardsInstant = Tabs.Rewards:AddSection("Instant Claims")
+
 local BtnInstantClaimIndex = Tabs.Rewards:AddButton({
-    Title = "📖 Instant Claim All Index Rewards",
-    Description = "Claims all discovered Index EXP and Level rewards now",
+    Title = "Instant Claim All Index Rewards",
+    Description = "Claims all pending unlocked weapons, armors, hats, and ores in Index",
     Callback = function()
         local count = 0
         pcall(function()
@@ -2902,7 +3403,7 @@ local BtnInstantClaimIndex = Tabs.Rewards:AddButton({
 UIElements.BtnInstantClaimIndex = BtnInstantClaimIndex
 
 local BtnClaimOnline = Tabs.Rewards:AddButton({
-    Title = "🎁 Claim All Online Gifts (1 - 12)",
+    Title = "Claim All Online Gifts (1 - 12)",
     Callback = function()
         for i = 1, 12 do
             OnlineData.TryClaim(i)
@@ -2919,7 +3420,7 @@ local BtnClaimOnline = Tabs.Rewards:AddButton({
 UIElements.BtnClaimOnline = BtnClaimOnline
 
 local BtnClaimTicket = Tabs.Rewards:AddButton({
-    Title = "🎫 Claim Daily Dungeon Ticket",
+    Title = "Claim Daily Dungeon Ticket",
     Callback = function()
         DungeonData.TryClaimDailyDunTic()
         local lang = State.Language or "TH"
@@ -2934,7 +3435,7 @@ local BtnClaimTicket = Tabs.Rewards:AddButton({
 UIElements.BtnClaimTicket = BtnClaimTicket
 
 local BtnClaimGroup = Tabs.Rewards:AddButton({
-    Title = "👑 Claim Group Gift & Update Reward",
+    Title = "Claim Group & Update Gifts",
     Callback = function()
         pcall(function()
             PlayerRemote.TryJoinGroupRE:FireServer()
@@ -2952,7 +3453,7 @@ local BtnClaimGroup = Tabs.Rewards:AddButton({
 UIElements.BtnClaimGroup = BtnClaimGroup
 
 local BtnRedeemCodes = Tabs.Rewards:AddButton({
-    Title = "🏷️ Redeem All Active Promo Codes",
+    Title = "Redeem All Active Promo Codes",
     Callback = function()
         local codes = {"UPDATE", "RELEASE", "FORGE", "GOODBRO", "LIKE1000", "ENHANCE"}
         task.spawn(function()
@@ -2979,22 +3480,12 @@ local BtnRedeemCodes = Tabs.Rewards:AddButton({
 UIElements.BtnRedeemCodes = BtnRedeemCodes
 
 -- ========================================================================
--- TAB: SETTINGS & CONFIGS
+-- TAB 6: SETTINGS (PROFILE, AUTO SAVE, AND WINDOW CUSTOMIZATION)
 -- ========================================================================
-SaveManager:SetLibrary(Fluent)
-InterfaceManager:SetLibrary(Fluent)
-
-SaveManager:IgnoreThemeSettings()
-SaveManager:SetIgnoreIndexes({ "SaveManager_ConfigList", "SaveManager_ConfigName", "AutoSaveToggle" })
-
-InterfaceManager:SetFolder("StreetHub")
-SaveManager:SetFolder(accountFolder)
-
-pcall(function() InterfaceManager:BuildInterfaceSection(Tabs.Settings) end)
-pcall(function() SaveManager:BuildConfigSection(Tabs.Settings) end)
+UIElements.SecSettingsProfile = Tabs.Settings:AddSection("Profile & Language")
 
 local DropdownLanguage = Tabs.Settings:AddDropdown("LanguageSetting", {
-    Title = "🌐 Language / เลือกภาษา",
+    Title = "Language / เลือกภาษา",
     Values = {"ไทย (Thai)", "English"},
     Multi = false,
     Default = (State.Language == "EN" and "English" or "ไทย (Thai)")
@@ -3015,8 +3506,63 @@ DropdownLanguage:OnChanged(function(Value)
 end)
 UIElements.DropdownLanguage = DropdownLanguage
 
+local ProfileParagraph = Tabs.Settings:AddParagraph({
+    Title = "Active Account Profile",
+    Content = "Account: " .. LocalPlayer.Name .. " (" .. tostring(LocalPlayer.UserId) .. ")\n" ..
+              "Folder: " .. accountFolder
+})
+UIElements.ProfileParagraph = ProfileParagraph
+
+UIElements.SecSettingsSave = Tabs.Settings:AddSection("Auto Save & Protection")
+
+local AutoSaveParagraph = Tabs.Settings:AddParagraph({
+    Title = "Per-Account Auto Save System",
+    Content = "Auto Save is ACTIVE and isolated per account.\nSettings and autoload are saved specifically for " .. LocalPlayer.Name .. "."
+})
+UIElements.AutoSaveParagraph = AutoSaveParagraph
+
+local ToggleAutoSaveSetting = Tabs.Settings:AddToggle("AutoSaveToggle", {
+    Title = "Enable Auto Save",
+    Description = "Automatically writes configuration to file whenever any toggle is clicked",
+    Default = true
+})
+ToggleAutoSaveSetting:OnChanged(function()
+    autoSaveEnabled = Options.AutoSaveToggle.Value
+end)
+UIElements.ToggleAutoSaveSetting = ToggleAutoSaveSetting
+
+local BtnForceSave = Tabs.Settings:AddButton({
+    Title = "Force Save Settings Now",
+    Description = "Immediately writes current setup to disk",
+    Callback = function()
+        SaveCurrentState()
+        pcall(function() SaveManager:Save("default") end)
+        local lang = State.Language or "TH"
+        local t = I18N[lang] or I18N.TH
+        Fluent:Notify({
+            Title = "Auto Save",
+            Content = t.NotifySaved,
+            Duration = 2
+        })
+    end
+})
+UIElements.BtnForceSave = BtnForceSave
+
+local ToggleAntiAFK = Tabs.Settings:AddToggle("AntiAFKToggle", {
+    Title = "Anti-AFK Protection",
+    Description = "Disables Roblox 20-minute idle kicks and pulses anti-afk input",
+    Default = true
+})
+ToggleAntiAFK:OnChanged(function()
+    State.AntiAFK = Options.AntiAFKToggle.Value
+    RequestAutoSave()
+end)
+UIElements.ToggleAntiAFK = ToggleAntiAFK
+
+UIElements.SecSettingsWindow = Tabs.Settings:AddSection("Window Display")
+
 local SliderWindowScale = Tabs.Settings:AddSlider("WindowScaleSlider", {
-    Title = "🔍 Window UI Scale (Zoom)",
+    Title = "Window UI Scale (Zoom)",
     Description = "Adjust overall UI scale percentage (60% - 125%)",
     Default = math.floor((State.WindowScale or (isMobileDevice and 0.85 or 1.0)) * 100),
     Min = 60,
@@ -3034,7 +3580,7 @@ local SliderWindowScale = Tabs.Settings:AddSlider("WindowScaleSlider", {
 UIElements.SliderWindowScale = SliderWindowScale
 
 local DropdownWindowPreset = Tabs.Settings:AddDropdown("WindowPresetSetting", {
-    Title = "📐 Window Size Preset",
+    Title = "Window Size Preset",
     Values = {"กะทัดรัด (Compact: 460 x 320)", "มาตรฐาน (Standard: 540 x 380)", "ใหญ่ (Large: 620 x 440)"},
     Multi = false,
     Default = (State.WindowWidth and State.WindowWidth <= 480) and "กะทัดรัด (Compact: 460 x 320)" or "มาตรฐาน (Standard: 540 x 380)"
@@ -3054,7 +3600,7 @@ end)
 UIElements.DropdownWindowPreset = DropdownWindowPreset
 
 local BtnResetWindowSize = Tabs.Settings:AddButton({
-    Title = "🔄 Reset Window Size & Scale",
+    Title = "Reset Window Size & Scale",
     Description = "Restore window dimensions and zoom back to default",
     Callback = function()
         local defScale = isMobileDevice and 0.85 or 1.0
@@ -3082,58 +3628,30 @@ local BtnResetWindowSize = Tabs.Settings:AddButton({
 })
 UIElements.BtnResetWindowSize = BtnResetWindowSize
 
-local ProfileParagraph = Tabs.Settings:AddParagraph({
-    Title = "👤 Active Account Profile",
-    Content = "Account: " .. LocalPlayer.Name .. " (" .. tostring(LocalPlayer.UserId) .. ")\n" ..
-              "Folder: " .. accountFolder
-})
-UIElements.ProfileParagraph = ProfileParagraph
+UIElements.SecSettingsConfig = Tabs.Settings:AddSection("Configurations")
 
-local AutoSaveParagraph = Tabs.Settings:AddParagraph({
-    Title = "💾 Per-Account Auto Save System",
-    Content = "Auto Save is ACTIVE and isolated per account.\nSettings and autoload are saved specifically for " .. LocalPlayer.Name .. "."
-})
-UIElements.AutoSaveParagraph = AutoSaveParagraph
+if SaveManager then
+    pcall(function()
+        SaveManager:SetLibrary(Fluent)
+        SaveManager:IgnoreThemeSettings()
+        SaveManager:SetIgnoreIndexes({ "SaveManager_ConfigList", "SaveManager_ConfigName", "AutoSaveToggle" })
+        SaveManager:SetFolder(accountFolder)
+        SaveManager:BuildConfigSection(Tabs.Settings)
+    end)
+end
 
-local ToggleAutoSaveSetting = Tabs.Settings:AddToggle("AutoSaveToggle", {
-    Title = "💾 Enable Auto Save",
-    Description = "Automatically writes configuration to file whenever any toggle is clicked",
-    Default = true
-})
-ToggleAutoSaveSetting:OnChanged(function()
-    autoSaveEnabled = Options.AutoSaveToggle.Value
-end)
-UIElements.ToggleAutoSaveSetting = ToggleAutoSaveSetting
+if InterfaceManager then
+    pcall(function()
+        InterfaceManager:SetLibrary(Fluent)
+        InterfaceManager:SetFolder("StreetHub")
+        InterfaceManager:BuildInterfaceSection(Tabs.Settings)
+    end)
+end
 
-local ToggleAntiAFK = Tabs.Settings:AddToggle("AntiAFKToggle", {
-    Title = "🛡️ Anti-AFK (Zero Disconnect & Rejoin)",
-    Description = "Disables Roblox 20-minute idle kicks and pulses anti-afk input",
-    Default = true
-})
-ToggleAntiAFK:OnChanged(function()
-    State.AntiAFK = Options.AntiAFKToggle.Value
-    RequestAutoSave()
-end)
-UIElements.ToggleAntiAFK = ToggleAntiAFK
+-- Apply selected language across all UI elements immediately
+UpdateLanguage(State.Language or "TH")
 
-local BtnForceSave = Tabs.Settings:AddButton({
-    Title = "💾 Force Save All Settings Now",
-    Description = "Immediately writes current setup to disk",
-    Callback = function()
-        SaveCurrentState()
-        pcall(function() SaveManager:Save("default") end)
-        local lang = State.Language or "TH"
-        local t = I18N[lang] or I18N.TH
-        Fluent:Notify({
-            Title = "Auto Save",
-            Content = t.NotifySaved,
-            Duration = 2
-        })
-    end
-})
-UIElements.BtnForceSave = BtnForceSave
-
-Window:SelectTab(1)
+Window:SelectTab(2)
 
 -- ========================================================================
 -- BACKGROUND RECURRING WORKERS
@@ -3161,8 +3679,16 @@ task.spawn(function()
 
             local formattedPower = AbbNumber.AbbreviateNumber(power)
             local formattedCoins = AbbNumber.AbbreviateNumber(coin)
-            StatParagraph:SetDesc(string.format("Power: %s\nLevel: %d\nRebirth: %d\nCoins: %s\nOres in Bag: %d/24",
-                formattedPower, lvl, reb, formattedCoins, oreTotal))
+            local ss2Coins = 0
+            pcall(function()
+                local sData = ProfileData.GetStoreData("Season")
+                if sData and sData.Season2 and sData.Season2.SeasonCoin then
+                    ss2Coins = sData.Season2.SeasonCoin
+                end
+            end)
+            local formattedSS2 = AbbNumber.AbbreviateNumber(ss2Coins)
+            StatParagraph:SetDesc(string.format("Power: %s\nLevel: %d\nRebirth: %d\nCoins: %s\nSeason 2 Coins: %s\nOres in Bag: %d/24",
+                formattedPower, lvl, reb, formattedCoins, formattedSS2, oreTotal))
         end)
         task.wait(0.5)
     end
@@ -3622,6 +4148,47 @@ if WorldBossRemote and WorldBossRemote:FindFirstChild("BossDeadRE") then
         end
     end)
 end
+
+-- 15. Auto Farm Season 2 Coins Worker (High-Speed Dungeon Floor 50 Multi-Worker)
+task.spawn(function()
+    while true do
+        if State.AutoFarmSeason2Coins then
+            pcall(function()
+                RunSeason2CoinsFarmBurst(60)
+            end)
+            task.wait(0.2)
+        else
+            task.wait(1.5)
+        end
+    end
+end)
+
+-- 16. Auto Roll Pet Luck Worker (Season 2)
+task.spawn(function()
+    while true do
+        if State.AutoPetLuck then
+            pcall(function()
+                local petID = RollPetLuckOnce()
+                if petID and (petID == "Event1_3" or petID == "Event1_4") then
+                    local lang = State.Language or "TH"
+                    local t = I18N[lang] or I18N.TH
+                    local info = SEASON_PET_MAP[petID]
+                    local name = info and info.Name or petID
+                    local rarity = info and info.Rarity or "Secret"
+                    local icon = info and info.Color or "✨"
+                    Fluent:Notify({
+                        Title = "Pet Luck 🎉",
+                        Content = string.format(t.NotifyPetLuckRoll or "Rolled %s [%s]!", icon .. " " .. name, rarity),
+                        Duration = 3
+                    })
+                end
+            end)
+            task.wait(0.2)
+        else
+            task.wait(1.5)
+        end
+    end
+end)
 
 -- Load saved settings before starting regular flow
 LoadSavedState()
